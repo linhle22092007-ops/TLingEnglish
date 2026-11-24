@@ -108,19 +108,24 @@
                         TlingEnglish
                     </span>
                     <span class="hidden sm:block text-[11px] font-medium text-pinky-500 -mt-1">
-                        Collocation &amp; AI Speaking Studio
+                        Học Collocation Thông Minh Với AI
                     </span>
                 </div>
             </button>
 
-            <!-- Active Deck Selector -->
+            <!-- Active Deck Selector & API Key Button -->
             <div class="flex items-center gap-2 sm:gap-2.5 flex-1 justify-end min-w-0">
-                <div class="relative flex-1 max-w-[240px]">
+                <div class="relative flex-1 max-w-[220px]">
                     <select id="active-deck-select" onchange="app.selectDeck(this.value, true)"
                         class="w-full appearance-none bg-pinky-50/90 hover:bg-pinky-100/80 border border-pinky-200 text-pinky-900 text-xs sm:text-sm font-semibold rounded-2xl pl-3.5 pr-8 py-2 focus:outline-hidden focus:ring-2 focus:ring-pinky-400 transition-all cursor-pointer truncate">
                     </select>
                     <i data-lucide="chevron-down" class="w-4 h-4 text-pinky-500 absolute right-2.5 top-1/2 -translate-y-1/2 pointer-events-none"></i>
                 </div>
+                <button type="button" onclick="app.openApiKeyModal()" title="Cài đặt Gemini API Key"
+                    class="px-3 py-2 rounded-2xl bg-pinky-50 hover:bg-pinky-100 border border-pinky-200 text-pinky-700 text-xs font-bold flex items-center gap-1.5 shrink-0 cursor-pointer">
+                    <i data-lucide="key-round" class="w-3.5 h-3.5"></i>
+                    <span class="hidden sm:inline">API Key</span>
+                </button>
             </div>
         </div>
 
@@ -147,11 +152,17 @@
         // =========================================================================
         // GEMINI API HELPER WITH EXPONENTIAL BACKOFF
         // =========================================================================
-        const apiKey = "AQ.Ab8RN6KVtge803BnpV_2RGcVv9qrc8YRrFr_jbvvVaocR0-tIg";
+        const apiKey = "";
         const GEMINI_MODEL = "gemini-3-flash-preview";
 
+        function getEffectiveApiKey() {
+            const saved = localStorage.getItem("tling_gemini_api_key");
+            return (saved && saved.trim()) ? saved.trim() : apiKey;
+        }
+
         async function callGeminiAPI({ contents, systemInstruction = "", responseSchema = null }) {
-            const url = `https://generativelanguage.googleapis.com/v1beta/models/${GEMINI_MODEL}:generateContent?key=${apiKey}`;
+            const activeKey = getEffectiveApiKey();
+            const url = `https://generativelanguage.googleapis.com/v1beta/models/${GEMINI_MODEL}:generateContent?key=${activeKey}`;
             const payload = { contents };
 
             if (systemInstruction) {
@@ -261,36 +272,36 @@
             }
 
             // =========================================================================
-            // DATA STORAGE & DEFAULT SAMPLE DECKS
+            // STATE PERSISTENCE & DEFAULT SAMPLE DECKS
             // =========================================================================
             getDefaultDecks() {
                 const now = Date.now();
                 return [
                     {
                         id: "deck-sample-ielts",
-                        title: "IELTS Speaking & Writing Collocations",
+                        title: "IELTS Speaking & Writing Core Collocations",
                         createdAt: new Date().toISOString().split("T")[0],
                         items: [
                             {
                                 id: "col-1",
                                 rootWord: "decision",
-                                collocation: "make a crucial decision",
-                                ipa: "/meɪk ə ˈkruːʃl dɪˈsɪʒn/",
-                                meaningVi: "đưa ra một quyết định mang tính bước ngoặt",
-                                exampleEn: "Graduating from university forced me to make a crucial decision about my future career.",
-                                exampleVi: "Việc tốt nghiệp đại học buộc tôi phải đưa ra một quyết định quan trọng về sự nghiệp tương lai.",
+                                collocation: "make an informed decision",
+                                ipa: "/meɪk ən ɪnˈfɔːrmd dɪˈsɪʒ.ən/",
+                                meaningVi: "đưa ra quyết định sáng suốt (dựa trên đầy đủ thông tin)",
+                                exampleEn: "Students should research carefully before they make an informed decision about their major.",
+                                exampleVi: "Sinh viên nên tìm hiểu kỹ trước khi đưa ra quyết định sáng suốt về chuyên ngành của mình.",
                                 mastery: 0,
                                 srsStep: 0,
                                 nextReviewAt: now
                             },
                             {
                                 id: "col-2",
-                                rootWord: "role",
-                                collocation: "play a vital role in",
-                                ipa: "/pleɪ ə ˈvaɪtl rəʊl ɪn/",
-                                meaningVi: "đóng một vai trò thiết yếu trong việc gì",
-                                exampleEn: "Technology plays a vital role in modern education and remote collaboration.",
-                                exampleVi: "Công nghệ đóng một vai trò thiết yếu trong giáo dục hiện đại và làm việc từ xa.",
+                                rootWord: "advantage",
+                                collocation: "take full advantage of",
+                                ipa: "/teɪk fʊl ədˈvæn.tɪdʒ əv/",
+                                meaningVi: "tận dụng triệt để, khai thác tối đa",
+                                exampleEn: "Young people should take full advantage of online resources to learn English.",
+                                exampleVi: "Người trẻ nên tận dụng tối đa các nguồn tài nguyên trực tuyến để học tiếng Anh.",
                                 mastery: 0,
                                 srsStep: 0,
                                 nextReviewAt: now
@@ -299,10 +310,10 @@
                                 id: "col-3",
                                 rootWord: "awareness",
                                 collocation: "raise public awareness of",
-                                ipa: "/reɪz ˈpʌblɪk əˈweənəs əv/",
+                                ipa: "/reɪz ˈpʌb.lɪk əˈwer.nəs əv/",
                                 meaningVi: "nâng cao nhận thức cộng đồng về",
                                 exampleEn: "Social media campaigns can effectively raise public awareness of environmental protection.",
-                                exampleVi: "Các chiến dịch mạng xã hội có thể nâng cao nhận thức cộng đồng một cách hiệu quả về bảo vệ môi trường.",
+                                exampleVi: "Các chiến dịch truyền thông xã hội có thể nâng cao nhận thức cộng đồng về bảo vệ môi trường.",
                                 mastery: 0,
                                 srsStep: 0,
                                 nextReviewAt: now
@@ -311,8 +322,8 @@
                                 id: "col-4",
                                 rootWord: "effort",
                                 collocation: "make a concerted effort",
-                                ipa: "/meɪk ə kənˈsɜːtɪd ˈefət/",
-                                meaningVi: "nỗ lực hết mình / chung sức đồng lòng",
+                                ipa: "/meɪk ə kənˈsɜːr.t̬ɪd ˈef.ɚt/",
+                                meaningVi: "nỗ lực hết mình, chung sức đồng lòng",
                                 exampleEn: "Governments and citizens must make a concerted effort to reduce plastic waste.",
                                 exampleVi: "Chính phủ và người dân phải nỗ lực chung tay để giảm thiểu rác thải nhựa.",
                                 mastery: 0,
@@ -322,6 +333,15 @@
                         ]
                     }
                 ];
+            }
+
+            normalizeSrsItem(item) {
+                return {
+                    ...item,
+                    mastery: typeof item.mastery === "number" ? item.mastery : 0,
+                    srsStep: typeof item.srsStep === "number" ? item.srsStep : 0,
+                    nextReviewAt: typeof item.nextReviewAt === "number" ? item.nextReviewAt : Date.now()
+                };
             }
 
             loadState() {
@@ -341,10 +361,7 @@
                     console.warn("Failed to load state:", e);
                 }
                 const defaults = this.getDefaultDecks();
-                return {
-                    decks: defaults,
-                    activeDeckId: defaults[0]?.id || null
-                };
+                return { decks: defaults, activeDeckId: defaults[0]?.id || null };
             }
 
             saveState() {
@@ -356,7 +373,65 @@
             }
 
             // =========================================================================
-            // NAVIGATION, DECK MANAGEMENT & DELETE MODAL
+            // SPACED REPETITION ENGINE (1 -> 2 -> 5 -> 10 -> 20 DAYS)
+            // =========================================================================
+            getDueItemsForDeck(deck) {
+                if (!deck || !Array.isArray(deck.items)) return [];
+                const now = Date.now();
+                return deck.items.filter(item => (item.nextReviewAt || 0) <= now);
+            }
+
+            getTotalDueAcrossAllDecks() {
+                return (this.state.decks || []).reduce((sum, deck) => sum + this.getDueItemsForDeck(deck).length, 0);
+            }
+
+            updateItemSrsSchedule(deckId, itemId, isSuccess) {
+                const deck = this.state.decks.find(d => d.id === deckId);
+                if (!deck) return;
+                const item = deck.items.find(i => i.id === itemId);
+                if (!item) return;
+
+                const now = Date.now();
+                if (isSuccess) {
+                    const nextStep = Math.min((item.srsStep || 0) + 1, SRS_INTERVALS_DAYS.length);
+                    const days = SRS_INTERVALS_DAYS[nextStep - 1];
+                    item.srsStep = nextStep;
+                    item.mastery = Math.min((item.mastery || 0) + 1, 5);
+                    item.nextReviewAt = now + days * DAY_MS;
+                } else {
+                    item.srsStep = 1;
+                    item.nextReviewAt = now + SRS_INTERVALS_DAYS[0] * DAY_MS;
+                }
+                this.saveState();
+            }
+
+            simulateAdvanceOneDay(deckId) {
+                const deck = this.state.decks.find(d => d.id === deckId);
+                if (!deck) return;
+                deck.items.forEach(item => {
+                    item.nextReviewAt = (item.nextReviewAt || Date.now()) - DAY_MS;
+                });
+                this.saveState();
+                this.render();
+                this.showToast(`Đã tua nhanh +1 ngày cho bộ "${deck.title}"!`);
+            }
+
+            startDueReviewForDeck(deckId, mode) {
+                this.state.activeDeckId = deckId;
+                this.saveState();
+                this.currentTab = mode;
+                if (mode === "flashcards") {
+                    this.initFlashcards(true);
+                } else if (mode === "quiz") {
+                    this.initQuiz(true);
+                } else if (mode === "writing") {
+                    this.initWriting(true);
+                }
+                this.render();
+            }
+
+            // =========================================================================
+            // NAVIGATION, DECK HUB, DELETE MODAL, IMPORT/EXPORT & API KEY MODAL
             // =========================================================================
             getActiveDeck() {
                 if (!this.state.decks || this.state.decks.length === 0) return null;
@@ -414,30 +489,26 @@
             deleteDeck(deckId) {
                 const deck = this.state.decks.find(d => d.id === deckId);
                 if (!deck) return;
-
                 const container = document.getElementById("modal-container");
                 if (!container) return;
-
                 container.innerHTML = `
-                    <div class="fixed inset-0 z-50 bg-slate-900/45 backdrop-blur-xs flex items-center justify-center p-4">
+                    <div class="fixed inset-0 z-50 bg-slate-900/50 backdrop-blur-xs flex items-center justify-center p-4">
                         <div class="bg-white rounded-3xl border border-pinky-200 max-w-md w-full p-6 shadow-xl space-y-4">
                             <div class="w-12 h-12 rounded-2xl bg-rose-100 text-rose-600 flex items-center justify-center">
                                 <i data-lucide="trash-2" class="w-6 h-6"></i>
                             </div>
-                            <div>
-                                <h3 class="font-display font-extrabold text-lg text-slate-900">Xóa file từ vựng này?</h3>
-                                <p class="text-xs sm:text-sm text-slate-500 mt-1">
-                                    Bạn có chắc muốn xóa bộ <strong>"${this.escapeHtml(deck.title)}"</strong> (${deck.items.length} cụm từ)? Hành động này không thể hoàn tác.
-                                </p>
-                            </div>
-                            <div class="flex items-center justify-end gap-2 pt-2">
-                                <button type="button" onclick="app.closeModal()"
-                                    class="px-4 py-2.5 rounded-2xl bg-slate-100 hover:bg-slate-200 text-slate-700 text-xs font-bold">
-                                    Hủy bỏ
+                            <h3 class="font-display font-extrabold text-lg text-slate-900">Xóa file từ vựng này?</h3>
+                            <p class="text-xs sm:text-sm text-slate-600">
+                                Bạn có chắc chắn muốn xóa bộ <strong>"${this.escapeHtml(deck.title)}"</strong> (${deck.items.length} cụm từ) không? Hành động này không thể hoàn tác.
+                            </p>
+                            <div class="flex justify-end gap-2.5 pt-2">
+                                <button type="button" onclick="document.getElementById('modal-container').innerHTML = ''"
+                                    class="px-4 py-2.5 rounded-2xl bg-slate-100 hover:bg-slate-200 text-slate-700 text-xs font-bold cursor-pointer">
+                                    Hủy
                                 </button>
                                 <button type="button" onclick="app.confirmDeleteDeck('${deck.id}')"
-                                    class="px-4 py-2.5 rounded-2xl bg-rose-600 hover:bg-rose-700 text-white text-xs font-bold">
-                                    Xác nhận xóa
+                                    class="px-4 py-2.5 rounded-2xl bg-rose-600 hover:bg-rose-700 text-white text-xs font-extrabold cursor-pointer">
+                                    Xóa vĩnh viễn
                                 </button>
                             </div>
                         </div>
@@ -452,141 +523,208 @@
                     this.state.activeDeckId = this.state.decks[0]?.id || null;
                 }
                 this.saveState();
-                this.closeModal();
-                this.currentTab = "home";
-                this.render();
-                this.showToast("Đã xóa file từ vựng!");
-            }
-
-            closeModal() {
                 const container = document.getElementById("modal-container");
                 if (container) container.innerHTML = "";
+                if (this.currentTab === "deck-hub") {
+                    this.currentTab = "home";
+                }
+                this.render();
+                this.showToast("Đã xóa bộ từ vựng!");
             }
 
             exportDeckToJson(deckId) {
                 const deck = this.state.decks.find(d => d.id === deckId) || this.getActiveDeck();
-                if (!deck) {
-                    this.showToast("Không tìm thấy bộ từ để xuất file!");
-                    return;
-                }
+                if (!deck) return;
                 const blob = new Blob([JSON.stringify(deck, null, 2)], { type: "application/json" });
                 const url = URL.createObjectURL(blob);
                 const a = document.createElement("a");
                 a.href = url;
-                a.download = `${deck.title.replace(/[^a-z0-9\u00C0-\u1EF9]+/gi, "_").toLowerCase()}.json`;
+                a.download = `${deck.title.replace(/[^a-zA-Z0-9_\u00C0-\u1EF9-]+/g, "_")}.json`;
                 document.body.appendChild(a);
                 a.click();
-                document.body.removeChild(a);
+                a.remove();
                 URL.revokeObjectURL(url);
                 this.showToast(`Đã xuất file "${deck.title}.json"!`);
             }
 
             importDeckFromJson(event) {
-                const file = event.target?.files?.[0];
+                const file = event?.target?.files?.[0];
                 if (!file) return;
                 const reader = new FileReader();
                 reader.onload = (e) => {
                     try {
                         const parsed = JSON.parse(e.target.result);
-                        if (!parsed || !Array.isArray(parsed.items)) {
-                            throw new Error("Invalid format");
+                        const items = Array.isArray(parsed.items) ? parsed.items : (Array.isArray(parsed) ? parsed : null);
+                        if (!items || items.length === 0) {
+                            this.showToast("File JSON không đúng định dạng bộ từ TlingEnglish!");
+                            return;
                         }
+                        const now = Date.now();
                         const importedDeck = {
-                            id: "deck-" + Date.now(),
+                            id: "deck-" + now,
                             title: parsed.title || file.name.replace(/\.json$/i, ""),
                             createdAt: new Date().toISOString().split("T")[0],
-                            items: parsed.items.map((item, idx) => this.normalizeSrsItem({
-                                ...item,
-                                id: item.id || ("col-" + Date.now() + "-" + idx)
+                            items: items.map((it, idx) => this.normalizeSrsItem({
+                                id: "col-" + now + "-" + idx,
+                                rootWord: it.rootWord || it.collocation || "",
+                                collocation: it.collocation || it.word || "",
+                                ipa: it.ipa || "",
+                                meaningVi: it.meaningVi || it.meaning || "",
+                                exampleEn: it.exampleEn || "",
+                                exampleVi: it.exampleVi || ""
                             }))
                         };
                         this.state.decks.unshift(importedDeck);
                         this.state.activeDeckId = importedDeck.id;
                         this.saveState();
-                        this.currentTab = "deck-hub";
                         this.render();
                         this.showToast(`Đã nhập thành công bộ "${importedDeck.title}"!`);
                     } catch (err) {
-                        this.showToast("File JSON không đúng định dạng bộ từ TlingEnglish!");
+                        this.showToast("Lỗi đọc file JSON, vui lòng kiểm tra lại file.");
                     }
                 };
                 reader.readAsText(file);
+                event.target.value = "";
             }
 
-            // =========================================================================
-            // SPACED REPETITION (1 - 2 - 5 - 10 - 20 DAYS PER DECK)
-            // =========================================================================
-            normalizeSrsItem(item) {
-                return {
-                    ...item,
-                    srsStep: typeof item.srsStep === "number" ? item.srsStep : 0,
-                    nextReviewAt: typeof item.nextReviewAt === "number" ? item.nextReviewAt : Date.now()
-                };
+            openApiKeyModal() {
+                const currentKey = localStorage.getItem("tling_gemini_api_key") || "";
+                const container = document.getElementById("modal-container");
+                if (!container) return;
+                container.innerHTML = `
+                    <div class="fixed inset-0 z-50 bg-slate-900/50 backdrop-blur-xs flex items-center justify-center p-4">
+                        <div class="bg-white rounded-3xl border border-pinky-200 max-w-md w-full p-6 shadow-xl space-y-4">
+                            <div class="flex items-center justify-between">
+                                <h3 class="font-display font-extrabold text-lg text-slate-900 flex items-center gap-2">
+                                    <i data-lucide="key-round" class="w-5 h-5 text-pinky-600"></i>
+                                    Cài đặt Gemini API Key
+                                </h3>
+                                <button type="button" onclick="document.getElementById('modal-container').innerHTML = ''" class="text-slate-400 hover:text-slate-700">
+                                    <i data-lucide="x" class="w-5 h-5"></i>
+                                </button>
+                            </div>
+                            <p class="text-xs text-slate-600 leading-relaxed">
+                                Dán mã khóa <strong>Gemini API Key (AIzaSy...)</strong> của bạn vào đây để dùng tính năng AI ghép Collocation, dịch tiếng Việt tự động và chấm Speaking trên GitHub Pages. Mã được lưu riêng trên trình duyệt của bạn, không bao giờ lộ lên GitHub.
+                            </p>
+                            <input id="modal-api-key-input" type="password" value="${this.escapeHtml(currentKey)}"
+                                placeholder="Dán mã AIzaSy... vào đây"
+                                class="w-full px-4 py-3 rounded-2xl border border-pinky-200 focus:border-pinky-500 text-xs sm:text-sm font-mono outline-hidden">
+                            <div class="flex justify-end gap-2 pt-1">
+                                <button type="button" onclick="localStorage.removeItem('tling_gemini_api_key'); document.getElementById('modal-container').innerHTML=''; app.showToast('Đã xóa API Key tùy chỉnh');"
+                                    class="px-3.5 py-2.5 rounded-2xl bg-slate-100 hover:bg-slate-200 text-slate-700 text-xs font-bold">
+                                    Xóa Key
+                                </button>
+                                <button type="button" onclick="app.saveApiKeyFromModal()"
+                                    class="px-5 py-2.5 rounded-2xl bg-pinky-600 hover:bg-pinky-700 text-white text-xs font-extrabold">
+                                    Lưu API Key
+                                </button>
+                            </div>
+                        </div>
+                    </div>
+                `;
+                if (window.lucide) lucide.createIcons();
             }
 
-            getDueItemsForDeck(deck) {
-                if (!deck || !Array.isArray(deck.items)) return [];
-                const now = Date.now();
-                return deck.items.filter(item => (item.nextReviewAt || 0) <= now);
-            }
-
-            getTotalDueAcrossAllDecks() {
-                return (this.state.decks || []).reduce((sum, deck) => sum + this.getDueItemsForDeck(deck).length, 0);
-            }
-
-            getSrsStageLabel(item) {
-                const step = item.srsStep || 0;
-                if (step <= 0) return "Mới • Chưa học";
-                const days = SRS_INTERVALS_DAYS[Math.min(step - 1, SRS_INTERVALS_DAYS.length - 1)];
-                return `Mốc ${days} ngày`;
-            }
-
-            updateItemSrsSchedule(deckId, itemId, isSuccess) {
-                const deck = this.state.decks.find(d => d.id === deckId);
-                if (!deck) return;
-                const item = deck.items.find(i => i.id === itemId);
-                if (!item) return;
-
-                if (isSuccess) {
-                    const nextStep = Math.min((item.srsStep || 0) + 1, SRS_INTERVALS_DAYS.length);
-                    const days = SRS_INTERVALS_DAYS[nextStep - 1];
-                    item.srsStep = nextStep;
-                    item.nextReviewAt = Date.now() + days * DAY_MS;
+            saveApiKeyFromModal() {
+                const input = document.getElementById("modal-api-key-input");
+                const val = (input ? input.value : "").trim();
+                if (val) {
+                    localStorage.setItem("tling_gemini_api_key", val);
+                    this.showToast("Đã lưu Gemini API Key thành công!");
                 } else {
-                    item.srsStep = 1;
-                    item.nextReviewAt = Date.now() + 1 * DAY_MS;
+                    localStorage.removeItem("tling_gemini_api_key");
+                    this.showToast("Đã đặt về API Key mặc định!");
                 }
-                this.saveState();
+                const container = document.getElementById("modal-container");
+                if (container) container.innerHTML = "";
             }
 
-            simulateAdvanceOneDay(deckId) {
-                const deck = this.state.decks.find(d => d.id === deckId);
-                if (!deck) return;
-                deck.items.forEach(item => {
-                    item.nextReviewAt = (item.nextReviewAt || Date.now()) - DAY_MS;
-                });
-                this.saveState();
-                this.render();
-                this.showToast(`Đã tua nhanh +1 ngày cho bộ "${deck.title}"!`);
+            // =========================================================================
+            // TEXT-TO-SPEECH (TTS), PRONUNCIATION HELPER & KEYBOARD SHORTCUTS
+            // =========================================================================
+            speakEnglish(text, rate = 0.95, onEndCallback = null) {
+                if (!text) {
+                    if (onEndCallback) onEndCallback();
+                    return;
+                }
+                if (!("speechSynthesis" in window)) {
+                    if (onEndCallback) onEndCallback();
+                    return;
+                }
+
+                window.speechSynthesis.cancel();
+                const utter = new SpeechSynthesisUtterance(text);
+                utter.lang = "en-US";
+                utter.rate = rate;
+
+                const voices = window.speechSynthesis.getVoices();
+                const preferred = voices.find(v => v.lang === "en-US" && (v.name.includes("Google") || v.name.includes("Natural") || v.name.includes("Samantha")))
+                    || voices.find(v => v.lang.startsWith("en-"));
+                if (preferred) utter.voice = preferred;
+
+                let finished = false;
+                const finishOnce = () => {
+                    if (finished) return;
+                    finished = true;
+                    if (onEndCallback) onEndCallback();
+                };
+
+                utter.onend = finishOnce;
+                utter.onerror = finishOnce;
+                window.speechSynthesis.speak(utter);
+
+                // Fallback timer in case browser speechSynthesis does not fire onend
+                if (onEndCallback) {
+                    const fallbackMs = Math.min(Math.max(text.length * 75, 900), 3500);
+                    setTimeout(finishOnce, fallbackMs);
+                }
             }
 
-            startDueReviewForDeck(deckId, mode) {
-                this.state.activeDeckId = deckId;
-                this.saveState();
-                this.currentTab = mode;
-                if (mode === "flashcards") {
-                    this.initFlashcards(true);
+            togglePronunciationGuide(mode) {
+                const deck = this.getActiveDeck();
+                let currentItem = null;
+                if (mode === "fc") {
+                    this.fcShowPronunciationTip = !this.fcShowPronunciationTip;
+                    currentItem = this.fcQueue[this.fcIndex];
                 } else if (mode === "quiz") {
-                    this.initQuiz(true);
-                } else if (mode === "writing") {
-                    this.initWriting(true);
+                    this.quizShowPronunciationTip = !this.quizShowPronunciationTip;
+                    currentItem = this.quizQueue[this.quizIndex];
+                } else if (mode === "write") {
+                    this.writeShowPronunciationTip = !this.writeShowPronunciationTip;
+                    currentItem = this.writeQueue[this.writeIndex];
+                }
+                if (currentItem && (this.fcShowPronunciationTip || this.quizShowPronunciationTip || this.writeShowPronunciationTip)) {
+                    this.speakEnglish(currentItem.collocation, 0.78);
                 }
                 this.render();
             }
 
-            // =========================================================================
-            // KEYBOARD SHORTCUTS, TTS & PRONUNCIATION HELPER
-            // =========================================================================
+            renderPronunciationGuideBox(item) {
+                const words = (item.collocation || "").split(/\s+/).filter(Boolean);
+                return `
+                    <div class="p-4 rounded-2xl bg-amber-50/90 border border-amber-200 space-y-2.5 text-left">
+                        <div class="flex flex-wrap items-center justify-between gap-2">
+                            <span class="text-xs font-extrabold text-amber-900">
+                                🗣️ Hướng dẫn phát âm: <span class="font-mono text-pinky-700">${this.escapeHtml(item.ipa || "/chuẩn giọng Mỹ/")}</span>
+                            </span>
+                            <button type="button" onclick="app.speakEnglish('${this.escapeJs(item.collocation)}', 0.72)"
+                                class="px-3 py-1 rounded-xl bg-amber-600 text-white text-xs font-bold">
+                                🐢 Đọc chậm cả cụm
+                            </button>
+                        </div>
+                        <div class="flex flex-wrap items-center gap-1.5">
+                            <span class="text-[11px] text-amber-800 font-semibold mr-1">Bấm nghe từng từ:</span>
+                            ${words.map(w => `
+                                <button type="button" onclick="app.speakEnglish('${this.escapeJs(w)}', 0.8)"
+                                    class="px-2.5 py-1 rounded-xl bg-white hover:bg-pinky-50 border border-amber-300 text-xs font-bold text-slate-800">
+                                    🔊 ${this.escapeHtml(w)}
+                                </button>
+                            `).join("")}
+                        </div>
+                    </div>
+                `;
+            }
+
             initKeyboardShortcuts() {
                 document.addEventListener("keydown", (e) => {
                     const tag = (e.target && e.target.tagName) ? e.target.tagName.toUpperCase() : "";
@@ -616,156 +754,75 @@
                 });
             }
 
-            speakEnglish(text, rate = 0.94, onDone = null) {
-                if (!text) {
-                    if (onDone) onDone();
-                    return;
-                }
-                if (!("speechSynthesis" in window)) {
-                    if (onDone) onDone();
-                    return;
-                }
-
-                try {
-                    window.speechSynthesis.cancel();
-                    const utter = new SpeechSynthesisUtterance(text);
-                    utter.lang = "en-US";
-                    utter.rate = rate;
-
-                    let finished = false;
-                    const completeOnce = () => {
-                        if (finished) return;
-                        finished = true;
-                        if (onDone) onDone();
-                    };
-
-                    utter.onend = completeOnce;
-                    utter.onerror = completeOnce;
-                    window.speechSynthesis.speak(utter);
-
-                    if (onDone) {
-                        setTimeout(completeOnce, Math.min(2600, Math.max(950, text.length * 85)));
-                    }
-                } catch (e) {
-                    if (onDone) onDone();
-                }
-            }
-
-            togglePronunciationGuide(mode) {
-                let current = null;
-                if (mode === "fc") {
-                    this.fcShowPronunciationTip = !this.fcShowPronunciationTip;
-                    current = this.fcQueue[this.fcIndex];
-                } else if (mode === "quiz") {
-                    this.quizShowPronunciationTip = !this.quizShowPronunciationTip;
-                    current = this.quizQueue[this.quizIndex];
-                } else if (mode === "write") {
-                    this.writeShowPronunciationTip = !this.writeShowPronunciationTip;
-                    current = this.writeQueue[this.writeIndex];
-                }
-                if (current) {
-                    this.speakEnglish(current.collocation, 0.78);
-                }
-                this.render();
-            }
-
-            renderPronunciationGuideBox(item) {
-                const words = (item.collocation || "").split(/\s+/).filter(Boolean);
-                return `
-                    <div class="p-4 rounded-2xl bg-pinky-50/90 border border-pinky-200 space-y-2.5 text-left">
-                        <div class="flex flex-wrap items-center justify-between gap-2">
-                            <span class="text-xs font-extrabold text-pinky-700 flex items-center gap-1.5">
-                                <i data-lucide="ear" class="w-4 h-4"></i> Hướng dẫn phát âm chi tiết
-                            </span>
-                            <button type="button" onclick="app.speakEnglish('${this.escapeJs(item.collocation)}', 0.72)"
-                                class="px-3 py-1 rounded-xl bg-white border border-pinky-200 text-pinky-700 text-xs font-bold hover:bg-pinky-100">
-                                🐢 Đọc chậm từng âm
-                            </button>
-                        </div>
-                        <p class="text-xs sm:text-sm font-mono font-bold text-slate-800">
-                            Phiên âm IPA: <span class="text-pinky-700">${this.escapeHtml(item.ipa || "(Nhấn từng từ bên dưới để nghe rõ)")}</span>
-                        </p>
-                        <div class="flex flex-wrap items-center gap-1.5">
-                            <span class="text-[11px] font-semibold text-slate-500 mr-1">Nghe tách từng từ:</span>
-                            ${words.map(w => `
-                                <button type="button" onclick="app.speakEnglish('${this.escapeJs(w)}', 0.85)"
-                                    class="px-2.5 py-1 rounded-xl bg-white hover:bg-pinky-600 text-slate-800 hover:text-white border border-pinky-200 text-xs font-bold transition-colors">
-                                    🔊 ${this.escapeHtml(w)}
-                                </button>
-                            `).join("")}
-                        </div>
-                    </div>
-                `;
-            }
-
             // =========================================================================
-            // HOME VIEW (MAIN LIBRARY OF CREATED FILES)
+            // HOME VIEW (MAIN LIBRARY OF CREATED DECKS) & DECK HUB VIEW
             // =========================================================================
             renderHomeView() {
                 const decks = this.state.decks || [];
-                const totalDueAll = this.getTotalDueAcrossAllDecks();
+                const totalDue = this.getTotalDueAcrossAllDecks();
 
                 return `
                     <div class="space-y-6">
-                        <!-- Hero Banner & Primary Create Button -->
-                        <div class="bg-white rounded-3xl border border-pinky-200 p-6 sm:p-8 shadow-sm flex flex-col md:flex-row md:items-center justify-between gap-6">
-                            <div class="space-y-2 max-w-xl">
-                                <span class="inline-flex items-center gap-1.5 px-3 py-1 rounded-full bg-pinky-100 text-pinky-700 text-xs font-bold">
-                                    <i data-lucide="sparkles" class="w-3.5 h-3.5"></i> Học Collocation thông minh cùng AI
+                        <!-- Hero Banner -->
+                        <div class="bg-white rounded-3xl border border-pinky-200 p-6 sm:p-8 shadow-sm flex flex-col md:flex-row md:items-center justify-between gap-5">
+                            <div class="space-y-2">
+                                <span class="px-3 py-1 rounded-full bg-pinky-100 text-pinky-700 text-xs font-extrabold">
+                                    ✨ Thư viện từ vựng của bạn
                                 </span>
                                 <h1 class="font-display font-extrabold text-2xl sm:text-3xl text-slate-900">
-                                    Thư viện file từ vựng của bạn
+                                    Chào mừng đến với TlingEnglish!
                                 </h1>
-                                <p class="text-xs sm:text-sm text-slate-600 leading-relaxed">
-                                    Chọn một bộ từ bên dưới để luyện tập qua <strong>Lịch ôn 1-2-5-10d, Flashcards, Trắc nghiệm, Tập viết 2 chiều</strong> hoặc <strong>Luyện nói AI</strong>, hoặc tạo bộ từ mới ngay!
+                                <p class="text-xs sm:text-sm text-slate-600 max-w-2xl">
+                                    Chọn một bộ từ vựng bên dưới để bắt đầu ôn tập theo chu kỳ 1-2-5-10 ngày, hoặc tạo bộ file mới để AI tự ghép Collocation &amp; dịch tiếng Việt.
                                 </p>
-                                ${totalDueAll > 0 ? `
-                                    <div class="pt-1">
-                                        <button type="button" onclick="app.switchTab('srs')"
-                                            class="inline-flex items-center gap-2 px-3.5 py-1.5 rounded-xl bg-rose-50 border border-rose-200 text-rose-700 text-xs font-bold hover:bg-rose-100 transition-colors">
-                                            <i data-lucide="bell-ring" class="w-3.5 h-3.5"></i>
-                                            Hôm nay có <strong>${totalDueAll}</strong> cụm từ đến hạn ôn tập
-                                        </button>
-                                    </div>
-                                ` : ""}
                             </div>
 
-                            <div class="flex flex-col sm:flex-row md:flex-col gap-2.5 shrink-0">
+                            <div class="flex flex-wrap items-center gap-2.5 shrink-0">
                                 <button type="button" onclick="app.switchTab('creator')"
-                                    class="px-6 py-4 rounded-2xl bg-gradient-to-r from-pinky-500 to-rose-500 hover:from-pinky-600 hover:to-rose-600 text-white font-display font-extrabold text-sm sm:text-base shadow-md shadow-pinky-200 flex items-center justify-center gap-2.5 transition-all cursor-pointer">
-                                    <i data-lucide="plus-circle" class="w-5 h-5"></i>
-                                    <span>Tạo file từ mới với AI</span>
+                                    class="px-5 py-3.5 rounded-2xl bg-gradient-to-r from-pinky-500 to-rose-500 hover:from-pinky-600 hover:to-rose-600 text-white font-display font-extrabold text-xs sm:text-sm shadow-sm flex items-center gap-2 cursor-pointer">
+                                    <i data-lucide="plus-circle" class="w-4 h-4"></i>
+                                    <span>+ Tạo file từ mới với AI</span>
                                 </button>
-                                <label class="px-5 py-2.5 rounded-2xl bg-pinky-50 hover:bg-pinky-100 border border-pinky-200 text-pinky-700 text-xs font-bold flex items-center justify-center gap-2 cursor-pointer transition-colors">
+                                <label class="px-4 py-3.5 rounded-2xl bg-pinky-50 hover:bg-pinky-100 border border-pinky-200 text-pinky-800 text-xs font-bold flex items-center gap-1.5 cursor-pointer">
                                     <i data-lucide="upload" class="w-4 h-4"></i>
-                                    <span>Nhập file .json có sẵn</span>
+                                    <span>Nhập file .json</span>
                                     <input type="file" accept=".json" onchange="app.importDeckFromJson(event)" class="hidden">
                                 </label>
                             </div>
                         </div>
 
+                        ${totalDue > 0 ? `
+                            <div class="bg-amber-50 border border-amber-200 rounded-3xl p-4 sm:p-5 flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+                                <div class="flex items-center gap-3">
+                                    <div class="w-10 h-10 rounded-2xl bg-amber-100 text-amber-700 flex items-center justify-center shrink-0">
+                                        <i data-lucide="bell-ring" class="w-5 h-5"></i>
+                                    </div>
+                                    <div>
+                                        <div class="font-display font-extrabold text-sm text-amber-950">Bạn có ${totalDue} cụm từ đến hạn ôn tập hôm nay!</div>
+                                        <div class="text-xs text-amber-800">Ôn đúng lịch 1-2-5-10 ngày giúp ghi nhớ sâu gấp 3 lần.</div>
+                                    </div>
+                                </div>
+                                <button type="button" onclick="app.switchTab('srs')"
+                                    class="px-4 py-2.5 rounded-2xl bg-amber-600 hover:bg-amber-700 text-white text-xs font-extrabold shrink-0 cursor-pointer">
+                                    Xem lịch ôn ngay →
+                                </button>
+                            </div>
+                        ` : ""}
+
                         <!-- Decks Grid -->
-                        <div class="space-y-3">
-                            <div class="flex items-center justify-between">
-                                <h2 class="font-display font-extrabold text-base sm:text-lg text-slate-900">
+                        <div>
+                            <div class="flex items-center justify-between mb-4">
+                                <h2 class="font-display font-extrabold text-lg text-slate-900">
                                     Các file từ vựng đã tạo (${decks.length})
                                 </h2>
                             </div>
 
                             ${decks.length === 0 ? `
                                 <div class="bg-white rounded-3xl border border-dashed border-pinky-300 p-10 text-center space-y-4">
-                                    <div class="w-14 h-14 rounded-2xl bg-pinky-100 text-pinky-600 flex items-center justify-center mx-auto">
-                                        <i data-lucide="folder-plus" class="w-7 h-7"></i>
-                                    </div>
-                                    <div class="space-y-1">
-                                        <h3 class="font-display font-bold text-lg text-slate-900">Chưa có file từ vựng nào</h3>
-                                        <p class="text-xs sm:text-sm text-slate-500 max-w-md mx-auto">
-                                            Hãy bấm nút <strong>"Tạo file từ mới với AI"</strong> để nhập danh sách từ đơn và tự động biến thành bộ Collocation chuẩn xác.
-                                        </p>
-                                    </div>
+                                    <p class="text-sm text-slate-600">Bạn chưa có file từ vựng nào. Hãy bấm nút bên dưới để tạo bộ từ đầu tiên!</p>
                                     <button type="button" onclick="app.switchTab('creator')"
-                                        class="px-5 py-2.5 rounded-2xl bg-pinky-600 text-white text-xs sm:text-sm font-bold">
-                                        + Tạo file từ đầu tiên
+                                        class="px-5 py-3 rounded-2xl bg-pinky-600 text-white text-xs sm:text-sm font-bold">
+                                        + Tạo bộ từ ngay
                                     </button>
                                 </div>
                             ` : `
@@ -774,59 +831,38 @@
                                         const dueCount = this.getDueItemsForDeck(deck).length;
                                         const learnedCount = deck.items.filter(i => (i.srsStep || 0) >= 2).length;
                                         return `
-                                            <div class="group bg-white rounded-3xl border border-pinky-200 hover:border-pinky-400 p-5 shadow-xs hover:shadow-md transition-all flex flex-col justify-between gap-4">
+                                            <div class="bg-white rounded-3xl border border-pinky-200 hover:border-pinky-400 p-5 shadow-2xs hover:shadow-md transition-all flex flex-col justify-between gap-4">
                                                 <div onclick="app.openDeckHub('${deck.id}')" class="cursor-pointer space-y-3">
                                                     <div class="flex items-start justify-between gap-2">
-                                                        <div class="w-11 h-11 rounded-2xl bg-pinky-100 text-pinky-600 flex items-center justify-center shrink-0 group-hover:bg-pinky-600 group-hover:text-white transition-colors">
+                                                        <div class="w-10 h-10 rounded-2xl bg-pinky-100 text-pinky-600 flex items-center justify-center shrink-0">
                                                             <i data-lucide="folder-heart" class="w-5 h-5"></i>
                                                         </div>
-                                                        <div class="flex items-center gap-1.5">
-                                                            ${dueCount > 0 ? `
-                                                                <span class="px-2.5 py-1 rounded-full bg-rose-100 text-rose-700 text-[11px] font-extrabold">
-                                                                    Cần ôn: ${dueCount}
-                                                                </span>
-                                                            ` : `
-                                                                <span class="px-2.5 py-1 rounded-full bg-emerald-100 text-emerald-700 text-[11px] font-bold">
-                                                                    Đã ôn đủ
-                                                                </span>
-                                                            `}
-                                                            <button type="button" onclick="event.stopPropagation(); app.deleteDeck('${deck.id}')"
-                                                                title="Xóa file từ vựng này"
-                                                                class="p-2 rounded-xl bg-rose-50 hover:bg-rose-600 text-rose-500 hover:text-white transition-colors">
-                                                                <i data-lucide="trash-2" class="w-4 h-4"></i>
-                                                            </button>
-                                                        </div>
+                                                        <span class="px-2.5 py-1 rounded-full ${dueCount > 0 ? 'bg-rose-100 text-rose-700' : 'bg-emerald-100 text-emerald-700'} text-[11px] font-extrabold">
+                                                            ${dueCount > 0 ? `Cần ôn: ${dueCount} từ` : "Đã ôn xong"}
+                                                        </span>
                                                     </div>
-
                                                     <div>
-                                                        <h3 class="font-display font-extrabold text-base sm:text-lg text-slate-900 group-hover:text-pinky-700 transition-colors line-clamp-1">
+                                                        <h3 class="font-display font-extrabold text-base sm:text-lg text-slate-900 line-clamp-2">
                                                             ${this.escapeHtml(deck.title)}
                                                         </h3>
-                                                        <p class="text-xs text-slate-500 mt-0.5">
-                                                            ${deck.items.length} cụm từ • Đã vững ${learnedCount}/${deck.items.length} • Tạo ngày ${this.escapeHtml(deck.createdAt || "")}
+                                                        <p class="text-xs text-slate-500 mt-1">
+                                                            ${deck.items.length} cụm từ • Đã vững: ${learnedCount}/${deck.items.length}
                                                         </p>
-                                                    </div>
-
-                                                    <div class="flex flex-wrap gap-1.5 pt-1">
-                                                        ${deck.items.slice(0, 3).map(it => `
-                                                            <span class="px-2.5 py-1 rounded-xl bg-pinky-50 text-pinky-800 text-[11px] font-semibold truncate max-w-[160px]">
-                                                                ${this.escapeHtml(it.collocation)}
-                                                            </span>
-                                                        `).join("")}
-                                                        ${deck.items.length > 3 ? `<span class="px-2 py-1 text-[11px] text-slate-400 font-semibold">+${deck.items.length - 3}</span>` : ""}
                                                     </div>
                                                 </div>
 
                                                 <div class="pt-3 border-t border-pinky-100 flex items-center justify-between gap-2">
                                                     <button type="button" onclick="app.openDeckHub('${deck.id}')"
-                                                        class="flex-1 py-2.5 px-4 rounded-2xl bg-pinky-600 hover:bg-pinky-700 text-white text-xs font-bold flex items-center justify-center gap-1.5 transition-colors cursor-pointer">
-                                                        <span>Mở bộ từ &amp; Luyện tập</span>
-                                                        <i data-lucide="arrow-right" class="w-3.5 h-3.5"></i>
+                                                        class="flex-1 py-2.5 px-3 rounded-xl bg-pinky-600 hover:bg-pinky-700 text-white text-xs font-extrabold text-center cursor-pointer">
+                                                        Mở file để học →
                                                     </button>
-                                                    <button type="button" onclick="app.exportDeckToJson('${deck.id}')"
-                                                        title="Tải file .json về máy"
-                                                        class="p-2.5 rounded-2xl bg-pinky-50 hover:bg-pinky-100 text-pinky-700 border border-pinky-200 transition-colors">
+                                                    <button type="button" onclick="app.exportDeckToJson('${deck.id}')" title="Tải file .json"
+                                                        class="p-2.5 rounded-xl bg-pinky-50 hover:bg-pinky-100 text-pinky-700 cursor-pointer">
                                                         <i data-lucide="download" class="w-4 h-4"></i>
+                                                    </button>
+                                                    <button type="button" onclick="app.deleteDeck('${deck.id}')" title="Xóa file từ này"
+                                                        class="p-2.5 rounded-xl bg-rose-50 hover:bg-rose-100 text-rose-600 cursor-pointer">
+                                                        <i data-lucide="trash-2" class="w-4 h-4"></i>
                                                     </button>
                                                 </div>
                                             </div>
@@ -839,115 +875,102 @@
                 `;
             }
 
-            // =========================================================================
-            // DECK HUB VIEW (WHEN USER CLICKS INTO A CREATED FILE -> SHOW MODES 2, 3, 4, 5, 6)
-            // =========================================================================
             renderDeckHubView() {
                 const deck = this.getActiveDeck();
                 if (!deck) {
-                    return this.renderEmptyDeckPrompt("Chi tiết bộ từ");
+                    return this.renderHomeView();
                 }
                 const dueCount = this.getDueItemsForDeck(deck).length;
 
                 return `
                     <div class="space-y-6">
-                        <!-- Top Breadcrumb & Actions -->
                         <div class="flex flex-wrap items-center justify-between gap-3">
                             <button type="button" onclick="app.goHome()"
-                                class="px-4 py-2 rounded-2xl bg-white hover:bg-pinky-50 border border-pinky-200 text-pinky-700 text-xs font-bold flex items-center gap-1.5 transition-colors cursor-pointer">
-                                <i data-lucide="arrow-left" class="w-4 h-4"></i>
-                                <span>Quay lại Trang chủ</span>
+                                class="px-4 py-2 rounded-2xl bg-white hover:bg-pinky-50 border border-pinky-200 text-pinky-700 text-xs font-bold flex items-center gap-1.5 cursor-pointer">
+                                <i data-lucide="arrow-left" class="w-4 h-4"></i> Quay lại Trang chủ
                             </button>
 
                             <div class="flex items-center gap-2">
                                 <button type="button" onclick="app.exportDeckToJson('${deck.id}')"
-                                    class="px-3.5 py-2 rounded-2xl bg-white hover:bg-pinky-50 border border-pinky-200 text-pinky-700 text-xs font-bold flex items-center gap-1.5">
-                                    <i data-lucide="download" class="w-3.5 h-3.5"></i>
-                                    <span>Xuất file .json</span>
+                                    class="px-3.5 py-2 rounded-2xl bg-white hover:bg-pinky-50 border border-pinky-200 text-pinky-700 text-xs font-bold flex items-center gap-1.5 cursor-pointer">
+                                    <i data-lucide="download" class="w-3.5 h-3.5"></i> Tải file .json
                                 </button>
                                 <button type="button" onclick="app.deleteDeck('${deck.id}')"
-                                    class="px-3.5 py-2 rounded-2xl bg-rose-50 hover:bg-rose-600 text-rose-600 hover:text-white border border-rose-200 text-xs font-bold flex items-center gap-1.5 transition-colors">
-                                    <i data-lucide="trash-2" class="w-3.5 h-3.5"></i>
-                                    <span>Xóa file</span>
+                                    class="px-3.5 py-2 rounded-2xl bg-rose-50 hover:bg-rose-100 border border-rose-200 text-rose-600 text-xs font-bold flex items-center gap-1.5 cursor-pointer">
+                                    <i data-lucide="trash-2" class="w-3.5 h-3.5"></i> Xóa file này
                                 </button>
                             </div>
                         </div>
 
-                        <!-- Deck Header Card -->
-                        <div class="bg-white rounded-3xl border border-pinky-200 p-6 shadow-sm space-y-5">
-                            <div class="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
-                                <div>
-                                    <span class="text-xs font-bold text-pinky-600 uppercase tracking-wider">Bộ từ vựng đang chọn</span>
-                                    <h1 class="font-display font-extrabold text-2xl sm:text-3xl text-slate-900 mt-0.5">
-                                        ${this.escapeHtml(deck.title)}
-                                    </h1>
-                                    <p class="text-xs sm:text-sm text-slate-500 mt-1">
-                                        Tổng cộng <strong>${deck.items.length}</strong> cụm từ Collocation • Đến hạn ôn hôm nay: <strong class="text-rose-600">${dueCount}</strong> từ
-                                    </p>
-                                </div>
+                        <!-- Deck Header & 5 Study Mode Buttons -->
+                        <div class="bg-white rounded-3xl border border-pinky-200 p-6 sm:p-8 shadow-sm space-y-6">
+                            <div>
+                                <span class="px-3 py-1 rounded-full bg-pinky-100 text-pinky-700 text-xs font-bold">
+                                    Bộ từ đang chọn • ${deck.items.length} cụm Collocation
+                                </span>
+                                <h1 class="font-display font-extrabold text-2xl sm:text-3xl text-slate-900 mt-2">
+                                    ${this.escapeHtml(deck.title)}
+                                </h1>
                             </div>
 
-                            <!-- 5 Learning Modes Grid (2, 3, 4, 5, 6) -->
-                            <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-3 pt-2">
+                            <!-- 5 Action Mode Cards -->
+                            <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-3">
                                 <button type="button" onclick="app.switchTab('srs')"
-                                    class="p-4 rounded-2xl bg-amber-50 hover:bg-amber-100 border border-amber-200 text-left space-y-2 transition-all cursor-pointer">
-                                    <div class="w-9 h-9 rounded-xl bg-amber-500 text-white flex items-center justify-center font-extrabold text-sm">2</div>
-                                    <div class="font-display font-extrabold text-sm text-amber-950">Lịch ôn 1-2-5-10d</div>
-                                    <p class="text-[11px] text-amber-800">Lặp lại ngắt quãng (${dueCount} từ đến hạn)</p>
+                                    class="p-4 rounded-2xl bg-amber-50 hover:bg-amber-100 border border-amber-200 text-left space-y-1.5 transition-all cursor-pointer">
+                                    <div class="font-display font-extrabold text-sm text-amber-900">2. Lịch ôn (1-2-5-10d)</div>
+                                    <div class="text-xs text-amber-700">${dueCount > 0 ? `Có ${dueCount} từ đến hạn` : "Xem chu kỳ lặp lại"}</div>
                                 </button>
 
-                                <button type="button" onclick="app.switchTab('flashcards')"
-                                    class="p-4 rounded-2xl bg-pinky-50 hover:bg-pinky-100 border border-pinky-200 text-left space-y-2 transition-all cursor-pointer">
-                                    <div class="w-9 h-9 rounded-xl bg-pinky-600 text-white flex items-center justify-center font-extrabold text-sm">3</div>
-                                    <div class="font-display font-extrabold text-sm text-pinky-950">Học Flashcards</div>
-                                    <p class="text-[11px] text-pinky-800">Thẻ lật 3D, phát âm &amp; phím tắt &lt; &gt;</p>
+                                <button type="button" onclick="app.initFlashcards(false); app.switchTab('flashcards')"
+                                    class="p-4 rounded-2xl bg-pinky-50 hover:bg-pinky-100 border border-pinky-200 text-left space-y-1.5 transition-all cursor-pointer">
+                                    <div class="font-display font-extrabold text-sm text-pinky-900">3. Học Flashcards</div>
+                                    <div class="text-xs text-pinky-700">Thẻ lật 3D &amp; phím &lt; &gt;</div>
                                 </button>
 
-                                <button type="button" onclick="app.switchTab('quiz')"
-                                    class="p-4 rounded-2xl bg-purple-50 hover:bg-purple-100 border border-purple-200 text-left space-y-2 transition-all cursor-pointer">
-                                    <div class="w-9 h-9 rounded-xl bg-purple-600 text-white flex items-center justify-center font-extrabold text-sm">4</div>
-                                    <div class="font-display font-extrabold text-sm text-purple-950">Trắc nghiệm</div>
-                                    <p class="text-[11px] text-purple-800">Phản xạ nhanh 4 đáp án Anh-Việt</p>
+                                <button type="button" onclick="app.initQuiz(false); app.switchTab('quiz')"
+                                    class="p-4 rounded-2xl bg-purple-50 hover:bg-purple-100 border border-purple-200 text-left space-y-1.5 transition-all cursor-pointer">
+                                    <div class="font-display font-extrabold text-sm text-purple-900">4. Trắc nghiệm</div>
+                                    <div class="text-xs text-purple-700">Phản xạ Anh ↔ Việt</div>
                                 </button>
 
-                                <button type="button" onclick="app.switchTab('writing')"
-                                    class="p-4 rounded-2xl bg-emerald-50 hover:bg-emerald-100 border border-emerald-200 text-left space-y-2 transition-all cursor-pointer">
-                                    <div class="w-9 h-9 rounded-xl bg-emerald-600 text-white flex items-center justify-center font-extrabold text-sm">5</div>
-                                    <div class="font-display font-extrabold text-sm text-emerald-950">Tập viết 2 chiều</div>
-                                    <p class="text-[11px] text-emerald-800">Luyện gõ Việt → Anh &amp; Anh → Việt</p>
+                                <button type="button" onclick="app.initWriting(false); app.switchTab('writing')"
+                                    class="p-4 rounded-2xl bg-emerald-50 hover:bg-emerald-100 border border-emerald-200 text-left space-y-1.5 transition-all cursor-pointer">
+                                    <div class="font-display font-extrabold text-sm text-emerald-900">5. Tập viết 2 chiều</div>
+                                    <div class="text-xs text-emerald-700">Việt → Anh &amp; Anh → Việt</div>
                                 </button>
 
-                                <button type="button" onclick="app.switchTab('speaking')"
-                                    class="p-4 rounded-2xl bg-rose-50 hover:bg-rose-100 border border-rose-200 text-left space-y-2 transition-all cursor-pointer">
-                                    <div class="w-9 h-9 rounded-xl bg-rose-600 text-white flex items-center justify-center font-extrabold text-sm">6</div>
-                                    <div class="font-display font-extrabold text-sm text-rose-950">Luyện nói AI</div>
-                                    <p class="text-[11px] text-rose-800">Nói dùng từ chỉ định &amp; sửa Band 7.0+</p>
+                                <button type="button" onclick="app.initSpeakingSession(); app.switchTab('speaking')"
+                                    class="p-4 rounded-2xl bg-gradient-to-br from-pinky-500 to-rose-500 hover:from-pinky-600 hover:to-rose-600 text-white text-left space-y-1.5 shadow-xs transition-all cursor-pointer">
+                                    <div class="font-display font-extrabold text-sm">6. Luyện nói với AI</div>
+                                    <div class="text-xs text-pinky-100">Ghi âm dài &amp; nâng Band 7.0+</div>
                                 </button>
                             </div>
                         </div>
 
-                        <!-- Vocabulary List in This File -->
-                        <div class="bg-white rounded-3xl border border-pinky-200 p-6 shadow-sm space-y-4">
-                            <h2 class="font-display font-extrabold text-base sm:text-lg text-slate-900">
-                                Danh sách các cụm từ trong file (${deck.items.length})
+                        <!-- Vocabulary List in Deck -->
+                        <div class="bg-white rounded-3xl border border-pinky-200 p-6 shadow-xs space-y-4">
+                            <h2 class="font-display font-extrabold text-lg text-slate-900">
+                                Danh sách cụm từ trong file (${deck.items.length})
                             </h2>
                             <div class="divide-y divide-pinky-100">
                                 ${deck.items.map((item, idx) => `
-                                    <div class="py-3.5 flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+                                    <div class="py-3.5 flex flex-col sm:flex-row sm:items-center justify-between gap-2">
                                         <div class="space-y-1">
                                             <div class="flex flex-wrap items-center gap-2">
-                                                <span class="text-xs font-bold text-pinky-400">#${idx + 1}</span>
-                                                <span class="font-display font-extrabold text-base text-pinky-700">${this.escapeHtml(item.collocation)}</span>
-                                                <span class="text-xs font-mono text-slate-400">${this.escapeHtml(item.ipa || "")}</span>
-                                                <span class="px-2 py-0.5 rounded-full bg-pinky-50 text-pinky-700 text-[10px] font-bold">${this.getSrsStageLabel(item)}</span>
+                                                <span class="text-xs font-bold text-pinky-500">#${idx + 1}</span>
+                                                <span class="font-display font-extrabold text-base text-slate-900">${this.escapeHtml(item.collocation)}</span>
+                                                ${item.ipa ? `<span class="text-xs font-mono text-slate-500">${this.escapeHtml(item.ipa)}</span>` : ""}
+                                                <button type="button" onclick="app.speakEnglish('${this.escapeJs(item.collocation)}')"
+                                                    class="p-1.5 rounded-xl bg-pinky-50 hover:bg-pinky-100 text-pinky-700 cursor-pointer">
+                                                    <i data-lucide="volume-2" class="w-3.5 h-3.5"></i>
+                                                </button>
                                             </div>
-                                            <p class="text-xs sm:text-sm font-semibold text-slate-800">${this.escapeHtml(item.meaningVi)}</p>
+                                            <p class="text-xs sm:text-sm font-semibold text-pinky-800">${this.escapeHtml(item.meaningVi)}</p>
                                             ${item.exampleEn ? `<p class="text-xs text-slate-500 italic">"${this.escapeHtml(item.exampleEn)}"</p>` : ""}
                                         </div>
-                                        <button type="button" onclick="app.speakEnglish('${this.escapeJs(item.collocation)}')"
-                                            class="self-start sm:self-center px-3 py-2 rounded-xl bg-pinky-50 hover:bg-pinky-100 text-pinky-700 text-xs font-bold flex items-center gap-1.5 shrink-0">
-                                            <i data-lucide="volume-2" class="w-4 h-4"></i> Nghe
-                                        </button>
+                                        <span class="px-2.5 py-1 rounded-full bg-slate-100 text-slate-600 text-[11px] font-bold self-start sm:self-center shrink-0">
+                                            ${item.srsStep === 0 ? "Chưa học" : `Mốc ${SRS_INTERVALS_DAYS[Math.min(item.srsStep, 5) - 1]} ngày`}
+                                        </span>
                                     </div>
                                 `).join("")}
                             </div>
@@ -957,8 +980,53 @@
             }
 
             // =========================================================================
-            // 1. CREATOR VIEW (AI COLLOCATION GENERATOR + INSTANT SAVE)
+            // 1. CREATOR VIEW (AI COLLOCATION GENERATOR + AUTO VIETNAMESE TRANSLATION)
             // =========================================================================
+            async translateRawItemsWithAI(rawLines) {
+                const prompt = `Bạn là từ điển chuyên ngành Anh - Việt & chuyên gia Collocation.
+Nhiệm vụ: Với mỗi từ hoặc cụm từ tiếng Anh người dùng nhập bên dưới:
+1. Mở rộng từ đơn lẻ thành Collocation (cụm từ tự nhiên, chuẩn xác trong giao tiếp hoặc IELTS). Nếu người dùng đã nhập sẵn một cụm từ hoàn chỉnh, hãy giữ nguyên cụm đó và chuẩn hóa.
+2. Cung cấp phiên âm IPA chuẩn Mỹ.
+3. Dịch nghĩa tiếng Việt thật tự nhiên, chính xác, dễ hiểu (BẮT BUỘC phải có nghĩa tiếng Việt rõ ràng cho 100% các mục, tuyệt đối không để trống hay giữ nguyên tiếng Anh).
+4. Viết 1 câu ví dụ tiếng Anh thực tế chứa cụm từ đó và dịch câu ví dụ sang tiếng Việt.
+
+Danh sách từ vựng đầu vào:
+${rawLines.map((line, i) => `${i + 1}. ${line}`).join("\n")}`;
+
+                const schema = {
+                    type: "ARRAY",
+                    items: {
+                        type: "OBJECT",
+                        properties: {
+                            rootWord: { type: "STRING" },
+                            collocation: { type: "STRING" },
+                            ipa: { type: "STRING" },
+                            meaningVi: { type: "STRING" },
+                            exampleEn: { type: "STRING" },
+                            exampleVi: { type: "STRING" }
+                        },
+                        required: ["rootWord", "collocation", "ipa", "meaningVi", "exampleEn", "exampleVi"]
+                    }
+                };
+
+                const jsonText = await callGeminiAPI({
+                    contents: [{ role: "user", parts: [{ text: prompt }] }],
+                    systemInstruction: "Bạn là chuyên gia ngôn ngữ Anh - Việt. Luôn mở rộng từ đơn thành Collocation tự nhiên và BẮT BUỘC dịch đầy đủ nghĩa tiếng Việt chuẩn xác cho từng cụm từ cùng câu ví dụ song ngữ Anh - Việt.",
+                    responseSchema: schema
+                });
+
+                const parsed = JSON.parse(jsonText);
+                return parsed.map((item, idx) => ({
+                    id: "col-" + Date.now() + "-" + idx,
+                    rootWord: (item.rootWord || rawLines[idx] || "").trim(),
+                    collocation: (item.collocation || rawLines[idx] || "").trim(),
+                    ipa: (item.ipa || "").trim(),
+                    meaningVi: (item.meaningVi || "").trim(),
+                    exampleEn: (item.exampleEn || "").trim(),
+                    exampleVi: (item.exampleVi || "").trim()
+                }));
+            }
+
             async generateCollocationsWithAI() {
                 const titleInput = document.getElementById("creator-deck-title");
                 const wordsInput = document.getElementById("creator-raw-words");
@@ -971,7 +1039,7 @@
                     .filter(Boolean);
 
                 if (rawLines.length === 0) {
-                    this.showToast("Vui lòng nhập ít nhất 1 từ vựng hoặc cụm từ!");
+                    this.showToast("Vui lòng nhập ít nhất 1 từ vựng hoặc cụm từ tiếng Anh!");
                     return;
                 }
 
@@ -979,45 +1047,11 @@
                 this.render();
 
                 try {
-                    const prompt = `Hãy chuyển đổi danh sách các từ/cụm từ tiếng Anh sau đây thành các Collocation (cụm từ tự nhiên, chuẩn xác trong giao tiếp hoặc IELTS) kèm phiên âm IPA, nghĩa tiếng Việt tự nhiên và 1 câu ví dụ song ngữ Anh - Việt cho mỗi từ.
-Danh sách từ đầu vào: ${rawLines.join(", ")}`;
-
-                    const schema = {
-                        type: "ARRAY",
-                        items: {
-                            type: "OBJECT",
-                            properties: {
-                                rootWord: { type: "STRING" },
-                                collocation: { type: "STRING" },
-                                ipa: { type: "STRING" },
-                                meaningVi: { type: "STRING" },
-                                exampleEn: { type: "STRING" },
-                                exampleVi: { type: "STRING" }
-                            },
-                            required: ["rootWord", "collocation", "ipa", "meaningVi", "exampleEn", "exampleVi"]
-                        }
-                    };
-
-                    const jsonText = await callGeminiAPI({
-                        contents: [{ role: "user", parts: [{ text: prompt }] }],
-                        systemInstruction: "Bạn là chuyên gia ngôn ngữ Anh - Việt. Không bao giờ để từ đơn lẻ; luôn mở rộng thành cụm từ Collocation tự nhiên kèm phiên âm IPA chuẩn Mỹ và nghĩa tiếng Việt dễ hiểu.",
-                        responseSchema: schema
-                    });
-
-                    const parsed = JSON.parse(jsonText);
-                    this.stagedCollocations = parsed.map((item, idx) => ({
-                        id: "col-" + Date.now() + "-" + idx,
-                        rootWord: item.rootWord || rawLines[idx] || "",
-                        collocation: item.collocation || rawLines[idx] || "",
-                        ipa: item.ipa || "",
-                        meaningVi: item.meaningVi || "",
-                        exampleEn: item.exampleEn || "",
-                        exampleVi: item.exampleVi || ""
-                    }));
-                    this.showToast(`AI đã tạo xong ${this.stagedCollocations.length} cụm Collocation!`);
+                    this.stagedCollocations = await this.translateRawItemsWithAI(rawLines);
+                    this.showToast(`AI đã ghép Collocation & dịch nghĩa tiếng Việt xong cho ${this.stagedCollocations.length} từ!`);
                 } catch (err) {
                     console.error(err);
-                    this.showToast("Không kết nối được AI, đã tạo danh sách cơ bản để bạn chỉnh sửa.");
+                    this.showToast("Không kết nối được AI (hãy kiểm tra nút API Key góc trên), đã tạo danh sách tạm.");
                     this.stagedCollocations = rawLines.map((line, idx) => {
                         const parts = line.split(/[:\-–]/);
                         return {
@@ -1025,7 +1059,7 @@ Danh sách từ đầu vào: ${rawLines.join(", ")}`;
                             rootWord: (parts[0] || "").trim(),
                             collocation: (parts[0] || "").trim(),
                             ipa: "",
-                            meaningVi: (parts[1] || "Chưa có nghĩa tiếng Việt").trim(),
+                            meaningVi: (parts[1] || "").trim(),
                             exampleEn: "",
                             exampleVi: ""
                         };
@@ -1033,6 +1067,29 @@ Danh sách từ đầu vào: ${rawLines.join(", ")}`;
                 } finally {
                     this.isGeneratingAI = false;
                     this.render();
+                }
+            }
+
+            async translateSingleStagedItem(index) {
+                const item = this.stagedCollocations[index];
+                if (!item || !item.collocation.trim()) return;
+
+                this.showToast(`AI đang dịch nghĩa cho "${item.collocation}"...`);
+                try {
+                    const result = await this.translateRawItemsWithAI([item.collocation]);
+                    if (result && result[0]) {
+                        this.stagedCollocations[index] = {
+                            ...item,
+                            ipa: result[0].ipa || item.ipa,
+                            meaningVi: result[0].meaningVi || item.meaningVi,
+                            exampleEn: result[0].exampleEn || item.exampleEn,
+                            exampleVi: result[0].exampleVi || item.exampleVi
+                        };
+                        this.render();
+                        this.showToast(`Đã dịch xong: "${this.stagedCollocations[index].meaningVi}"`);
+                    }
+                } catch (err) {
+                    this.showToast("Không kết nối được AI để dịch, vui lòng kiểm tra API Key.");
                 }
             }
 
@@ -1047,35 +1104,92 @@ Danh sách từ đầu vào: ${rawLines.join(", ")}`;
                 this.render();
             }
 
-            saveStagedDeck(alsoExportJson = false) {
+            async saveStagedDeck(alsoExportJson = false) {
+                if (this.isGeneratingAI) return;
                 const titleInput = document.getElementById("creator-deck-title");
                 const wordsInput = document.getElementById("creator-raw-words");
                 const title = (titleInput ? titleInput.value : this.newDeckTitleInput).trim() || `Bộ từ ngày ${new Date().toLocaleDateString("vi-VN")}`;
 
                 let itemsToSave = [...this.stagedCollocations];
 
-                // If user hasn't clicked AI generate yet, parse directly from raw textarea
+                // If user typed English words and clicked Save directly, auto-translate Vietnamese via AI first!
                 if (itemsToSave.length === 0) {
                     const rawText = (wordsInput ? wordsInput.value : this.rawWordsInput).trim();
-                    const lines = rawText.split(/\n+/).map(s => s.trim()).filter(Boolean);
+                    const lines = rawText.split(/[\n,;]+/).map(s => s.trim()).filter(Boolean);
                     if (lines.length === 0) {
                         this.showToast("Vui lòng nhập từ vựng trước khi lưu bộ từ!");
                         return;
                     }
-                    itemsToSave = lines.map((line, idx) => {
-                        const parts = line.split(/[:\-–]/);
-                        const phrase = (parts[0] || "").trim();
-                        const meaning = (parts.slice(1).join("-") || "Nghĩa tiếng Việt (bấm sửa nếu cần)").trim();
-                        return {
-                            id: "col-" + Date.now() + "-" + idx,
-                            rootWord: phrase,
-                            collocation: phrase,
-                            ipa: "",
-                            meaningVi: meaning,
-                            exampleEn: "",
-                            exampleVi: ""
-                        };
-                    });
+
+                    // Check if any line lacks Vietnamese meaning after ':' or '-'
+                    const hasUnTranslatedLines = lines.some(l => !/[:\-–]/.test(l));
+                    if (hasUnTranslatedLines) {
+                        this.isGeneratingAI = true;
+                        this.render();
+                        try {
+                            itemsToSave = await this.translateRawItemsWithAI(lines);
+                        } catch (err) {
+                            itemsToSave = lines.map((line, idx) => {
+                                const parts = line.split(/[:\-–]/);
+                                const phrase = (parts[0] || "").trim();
+                                const meaning = (parts.slice(1).join("-") || "Chưa dịch nghĩa tiếng Việt").trim();
+                                return {
+                                    id: "col-" + Date.now() + "-" + idx,
+                                    rootWord: phrase,
+                                    collocation: phrase,
+                                    ipa: "",
+                                    meaningVi: meaning,
+                                    exampleEn: "",
+                                    exampleVi: ""
+                                };
+                            });
+                        } finally {
+                            this.isGeneratingAI = false;
+                        }
+                    } else {
+                        itemsToSave = lines.map((line, idx) => {
+                            const parts = line.split(/[:\-–]/);
+                            const phrase = (parts[0] || "").trim();
+                            const meaning = (parts.slice(1).join("-") || "").trim();
+                            return {
+                                id: "col-" + Date.now() + "-" + idx,
+                                rootWord: phrase,
+                                collocation: phrase,
+                                ipa: "",
+                                meaningVi: meaning,
+                                exampleEn: "",
+                                exampleVi: ""
+                            };
+                        });
+                    }
+                } else {
+                    // Translate any staged item that still has empty meaningVi
+                    const missingIdx = itemsToSave
+                        .map((it, i) => (!it.meaningVi || !it.meaningVi.trim() ? i : -1))
+                        .filter(i => i !== -1);
+
+                    if (missingIdx.length > 0) {
+                        this.isGeneratingAI = true;
+                        this.render();
+                        try {
+                            const translated = await this.translateRawItemsWithAI(missingIdx.map(i => itemsToSave[i].collocation));
+                            missingIdx.forEach((origIdx, tIdx) => {
+                                if (translated[tIdx]) {
+                                    itemsToSave[origIdx] = {
+                                        ...itemsToSave[origIdx],
+                                        ipa: itemsToSave[origIdx].ipa || translated[tIdx].ipa,
+                                        meaningVi: translated[tIdx].meaningVi,
+                                        exampleEn: itemsToSave[origIdx].exampleEn || translated[tIdx].exampleEn,
+                                        exampleVi: itemsToSave[origIdx].exampleVi || translated[tIdx].exampleVi
+                                    };
+                                }
+                            });
+                        } catch (e) {
+                            // Keep existing values if offline
+                        } finally {
+                            this.isGeneratingAI = false;
+                        }
+                    }
                 }
 
                 const now = Date.now();
@@ -1086,6 +1200,7 @@ Danh sách từ đầu vào: ${rawLines.join(", ")}`;
                     items: itemsToSave.map((it, idx) => ({
                         ...it,
                         id: it.id || ("col-" + now + "-" + idx),
+                        meaningVi: it.meaningVi || "Chưa có nghĩa tiếng Việt",
                         mastery: 0,
                         srsStep: 0,
                         nextReviewAt: now
@@ -1107,7 +1222,7 @@ Danh sách từ đầu vào: ${rawLines.join(", ")}`;
 
                 this.currentTab = "deck-hub";
                 this.render();
-                this.showToast(`Đã tạo & lưu thành công bộ "${newDeck.title}"!`);
+                this.showToast(`Đã dịch tiếng Việt & lưu thành công bộ "${newDeck.title}"!`);
             }
 
             renderCreatorView() {
@@ -1123,13 +1238,13 @@ Danh sách từ đầu vào: ${rawLines.join(", ")}`;
                         <div class="bg-white rounded-3xl border border-pinky-200 p-6 sm:p-8 shadow-sm space-y-5">
                             <div>
                                 <span class="px-3 py-1 rounded-full bg-pinky-100 text-pinky-700 text-xs font-bold">
-                                    Bước 1 • Tạo bộ từ &amp; File ôn tập
+                                    Bước 1 • Tạo bộ từ &amp; Tự động dịch tiếng Việt bằng AI
                                 </span>
                                 <h1 class="font-display font-extrabold text-2xl text-slate-900 mt-2">
-                                    Biến từ đơn lẻ thành bộ Collocation chuẩn xác
+                                    Nhập từ vựng tiếng Anh — AI tự ghép Collocation &amp; dịch tiếng Việt
                                 </h1>
                                 <p class="text-xs sm:text-sm text-slate-500 mt-1">
-                                    Nhập các từ đơn lẻ (mỗi từ một dòng hoặc cách nhau dấu phẩy), AI sẽ tự động ghép thành cụm từ tự nhiên kèm nghĩa tiếng Việt và ví dụ.
+                                    Bạn chỉ cần gõ các từ/cụm từ tiếng Anh (mỗi từ một dòng hoặc cách nhau dấu phẩy), AI sẽ tự động ghép thành Collocation chuẩn và dịch đầy đủ nghĩa tiếng Việt cùng câu ví dụ.
                                 </p>
                             </div>
 
@@ -1144,11 +1259,11 @@ Danh sách từ đầu vào: ${rawLines.join(", ")}`;
 
                                 <div>
                                     <label class="block text-xs font-bold text-slate-700 mb-1.5">
-                                        Danh sách từ vựng cần học (hoặc nhập nhanh dạng <code>cụm từ : nghĩa tiếng Việt</code>)
+                                        Danh sách từ vựng tiếng Anh cần học
                                     </label>
                                     <textarea id="creator-raw-words" rows="5"
                                         oninput="app.rawWordsInput = this.value"
-                                        placeholder="Ví dụ:&#10;decision&#10;opportunity&#10;take advantage of&#10;impact"
+                                        placeholder="Chỉ cần nhập tiếng Anh, ví dụ:&#10;decision&#10;opportunity&#10;take advantage of&#10;impact"
                                         class="w-full p-4 rounded-2xl border border-pinky-200 focus:border-pinky-500 focus:ring-2 focus:ring-pinky-200 text-sm outline-hidden">${this.escapeHtml(this.rawWordsInput)}</textarea>
                                 </div>
 
@@ -1156,13 +1271,13 @@ Danh sách từ đầu vào: ${rawLines.join(", ")}`;
                                     <button type="button" onclick="app.generateCollocationsWithAI()" ${this.isGeneratingAI ? "disabled" : ""}
                                         class="px-5 py-3 rounded-2xl bg-gradient-to-r from-pinky-500 to-rose-500 hover:from-pinky-600 hover:to-rose-600 disabled:opacity-60 text-white text-xs sm:text-sm font-extrabold shadow-sm flex items-center gap-2 cursor-pointer">
                                         <i data-lucide="sparkles" class="w-4 h-4"></i>
-                                        <span>${this.isGeneratingAI ? "AI đang ghép Collocation..." : "Gợi ý Collocation & Nghĩa bằng AI"}</span>
+                                        <span>${this.isGeneratingAI ? "AI đang ghép Collocation & dịch tiếng Việt..." : "Ghép Collocation & Dịch Tiếng Việt bằng AI"}</span>
                                     </button>
 
-                                    <button type="button" onclick="app.saveStagedDeck(false)"
-                                        class="px-5 py-3 rounded-2xl bg-emerald-600 hover:bg-emerald-700 text-white text-xs sm:text-sm font-extrabold shadow-sm flex items-center gap-2 cursor-pointer">
+                                    <button type="button" onclick="app.saveStagedDeck(false)" ${this.isGeneratingAI ? "disabled" : ""}
+                                        class="px-5 py-3 rounded-2xl bg-emerald-600 hover:bg-emerald-700 disabled:opacity-60 text-white text-xs sm:text-sm font-extrabold shadow-sm flex items-center gap-2 cursor-pointer">
                                         <i data-lucide="check-circle" class="w-4 h-4"></i>
-                                        <span>Tạo &amp; Lưu Bộ Từ Ngay</span>
+                                        <span>${this.isGeneratingAI ? "Đang dịch & lưu..." : "Dịch Tiếng Việt & Lưu Bộ Từ Ngay"}</span>
                                     </button>
                                 </div>
                             </div>
@@ -1175,7 +1290,7 @@ Danh sách từ đầu vào: ${rawLines.join(", ")}`;
                                         <h2 class="font-display font-extrabold text-lg text-slate-900">
                                             Xem trước &amp; Chỉnh sửa (${this.stagedCollocations.length} cụm từ)
                                         </h2>
-                                        <p class="text-xs text-slate-500">Bạn có thể sửa lại bất kỳ cụm từ hoặc nghĩa tiếng Việt nào trước khi lưu.</p>
+                                        <p class="text-xs text-slate-500">Bạn có thể sửa lại cụm từ hoặc bấm "Dịch lại bằng AI" cho từng dòng nếu muốn.</p>
                                     </div>
                                     <div class="flex flex-wrap items-center gap-2">
                                         <button type="button" onclick="app.saveStagedDeck(false)"
@@ -1195,19 +1310,25 @@ Danh sách từ đầu vào: ${rawLines.join(", ")}`;
                                     ${this.stagedCollocations.map((item, idx) => `
                                         <div class="p-4 rounded-2xl bg-pinky-50/60 border border-pinky-200 space-y-2.5">
                                             <div class="flex items-center justify-between gap-2">
-                                                <span class="text-xs font-extrabold text-pinky-700">#${idx + 1} • Từ gốc: ${this.escapeHtml(item.rootWord)}</span>
-                                                <button type="button" onclick="app.removeStagedItem(${idx})" class="text-rose-500 hover:text-rose-700 text-xs font-bold">
-                                                    Xóa dòng
-                                                </button>
+                                                <span class="text-xs font-extrabold text-pinky-700">#${idx + 1} • Từ gốc: ${this.escapeHtml(item.rootWord)} ${item.ipa ? `<span class="font-mono font-normal text-slate-500">(${this.escapeHtml(item.ipa)})</span>` : ""}</span>
+                                                <div class="flex items-center gap-3">
+                                                    <button type="button" onclick="app.translateSingleStagedItem(${idx})"
+                                                        class="text-pinky-600 hover:text-pinky-800 text-xs font-bold flex items-center gap-1">
+                                                        <i data-lucide="languages" class="w-3.5 h-3.5"></i> Dịch lại bằng AI
+                                                    </button>
+                                                    <button type="button" onclick="app.removeStagedItem(${idx})" class="text-rose-500 hover:text-rose-700 text-xs font-bold">
+                                                        Xóa dòng
+                                                    </button>
+                                                </div>
                                             </div>
                                             <div class="grid grid-cols-1 sm:grid-cols-2 gap-2.5">
                                                 <input type="text" value="${this.escapeHtml(item.collocation)}"
                                                     oninput="app.updateStagedField(${idx}, 'collocation', this.value)"
-                                                    placeholder="Cụm từ Collocation"
+                                                    placeholder="Cụm từ Collocation tiếng Anh"
                                                     class="px-3.5 py-2 rounded-xl bg-white border border-pinky-200 text-xs sm:text-sm font-bold text-pinky-800">
                                                 <input type="text" value="${this.escapeHtml(item.meaningVi)}"
                                                     oninput="app.updateStagedField(${idx}, 'meaningVi', this.value)"
-                                                    placeholder="Nghĩa tiếng Việt"
+                                                    placeholder="Nghĩa tiếng Việt (AI tự dịch)"
                                                     class="px-3.5 py-2 rounded-xl bg-white border border-pinky-200 text-xs sm:text-sm font-semibold text-slate-800">
                                             </div>
                                             <input type="text" value="${this.escapeHtml(item.exampleEn)}"
