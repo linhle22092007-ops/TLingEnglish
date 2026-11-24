@@ -83,14 +83,6 @@
         .mic-pulse {
             animation: micPulse 1.5s infinite;
         }
-        /* Soundwave bars */
-        @keyframes waveBar {
-            0%, 100% { height: 6px; }
-            50% { height: 22px; }
-        }
-        .wave-bar {
-            animation: waveBar 0.9s ease-in-out infinite;
-        }
     </style>
 </head>
 <body class="antialiased selection:bg-pinky-200 selection:text-pinky-900">
@@ -153,7 +145,7 @@
         // GEMINI API HELPER WITH AUTOMATIC MODEL FALLBACK & DIAGNOSTICS
         // =========================================================================
         const apiKey = "";
-        const GEMINI_MODELS = ["gemini-2.5-flash", "gemini-2.0-flash"];
+        const GEMINI_MODELS = ["gemini-2.5-flash", "gemini-2.0-flash", "gemini-3-flash-preview"];
 
         function getEffectiveApiKey() {
             const saved = localStorage.getItem("tling_gemini_api_key");
@@ -209,7 +201,388 @@
 
         // =========================================================================
         // SPACED REPETITION INTERVALS (1 -> 2 -> 5 -> 10 -> 20 DAYS)
-// ... existing code ... -->
+        // =========================================================================
+        const SRS_INTERVALS_DAYS = [1, 2, 5, 10, 20];
+        const DAY_MS = 24 * 60 * 60 * 1000;
+
+        class TlingEnglishApp {
+            constructor() {
+                this.STORAGE_KEY = "tling_english_v4_state";
+                this.state = this.loadState();
+
+                // Active Navigation Tab
+                this.currentTab = "home"; // 'home' | 'deck-hub' | 'creator' | 'srs' | 'flashcards' | 'quiz' | 'writing' | 'speaking'
+
+                // Creator & Staging State
+                this.rawWordsInput = "";
+                this.newDeckTitleInput = "";
+                this.stagedCollocations = [];
+                this.isGeneratingAI = false;
+
+                // Flashcard State
+                this.fcQueue = [];
+                this.fcIndex = 0;
+                this.fcFlipped = false;
+                this.fcOnlyDue = false;
+                this.fcShowPronunciationTip = false;
+                this.fcLastDirectionHint = null;
+
+                // Quiz State
+                this.quizQueue = [];
+                this.quizIndex = 0;
+                this.quizScore = 0;
+                this.quizAnswered = false;
+                this.quizSelectedId = null;
+                this.quizOptions = [];
+                this.quizDirection = "en-to-vi"; // 'en-to-vi' | 'vi-to-en'
+                this.quizOnlyDue = false;
+                this.quizShowPronunciationTip = false;
+
+                // Two-Way Writing State
+                this.writeQueue = [];
+                this.writeIndex = 0;
+                this.writeScore = 0;
+                this.writeAnswered = false;
+                this.writeUserAnswer = "";
+                this.writeFeedback = null;
+                this.writeDirection = "vi-to-en"; // 'vi-to-en' | 'en-to-vi' | 'mixed'
+                this.currentItemDirection = "vi-to-en";
+                this.isCheckingWritingAI = false;
+                this.writeOnlyDue = false;
+                this.writeShowPronunciationTip = false;
+
+                // AI Speaking Tutor State
+                this.speakingMessages = [];
+                this.targetSpeakingCollocations = [];
+                this.isSpeakingLoading = false;
+                this.isRecording = false;
+                this.recognition = null;
+                this.recordingSeconds = 0;
+                this.recordingTimer = null;
+                this.finalTranscriptBuffer = "";
+
+                this.initSpeechRecognition();
+                this.initKeyboardShortcuts();
+                this.render();
+            }
+
+            // =========================================================================
+            // STATE & SPACED REPETITION MANAGEMENT
+            // =========================================================================
+            normalizeSrsItem(item) {
+                const now = Date.now();
+                return {
+                    ...item,
+                    srsStep: typeof item.srsStep === "number" ? item.srsStep : 0,
+                    nextReviewAt: typeof item.nextReviewAt === "number" ? item.nextReviewAt : now
+                };
+            }
+
+            getDefaultDecks() {
+                const now = Date.now();
+                return [
+                    {
+                        id: "deck-ielts-core-1",
+                        title: "IELTS Speaking & Writing Collocations",
+                        createdAt: new Date().toISOString().slice(0, 10),
+                        items: [
+                            {
+                                id: "col-1",
+                                rootWord: "decision",
+                                collocation: "make an informed decision",
+                                ipa: "/meɪk ən ɪnˈfɔːrmd dɪˈsɪʒ.ən/",
+                                meaningVi: "đưa ra quyết định sáng suốt (dựa trên đầy đủ thông tin)",
+                                exampleEn: "Students should research carefully before making an informed decision about their major.",
+                                exampleVi: "Sinh viên nên tìm hiểu kỹ trước khi đưa ra quyết định sáng suốt về chuyên ngành của mình.",
+                                mastery: 0,
+                                srsStep: 0,
+                                nextReviewAt: now
+                            },
+                            {
+                                id: "col-2",
+                                rootWord: "balance",
+                                collocation: "strike a healthy balance",
+                                ipa: "/straɪk ə ˈhel.θi ˈbæl.əns/",
+                                meaningVi: "đạt được sự cân bằng lành mạnh",
+                                exampleEn: "It is crucial to strike a healthy balance between work and personal life.",
+                                exampleVi: "Việc đạt được sự cân bằng lành mạnh giữa công việc và cuộc sống cá nhân là rất quan trọng.",
+                                mastery: 0,
+                                srsStep: 0,
+                                nextReviewAt: now
+                            },
+                            {
+                                id: "col-3",
+                                rootWord: "awareness",
+                                collocation: "raise public awareness of",
+                                ipa: "/reɪz ˈpʌb.lɪk əˈwer.nəs əv/",
+                                meaningVi: "nâng cao nhận thức cộng đồng về",
+                                exampleEn: "Social media campaigns can effectively raise public awareness of environmental protection.",
+                                exampleVi: "Các chiến dịch mạng xã hội có thể nâng cao nhận thức cộng đồng một cách hiệu quả về bảo vệ môi trường.",
+                                mastery: 0,
+                                srsStep: 0,
+                                nextReviewAt: now
+                            },
+                            {
+                                id: "col-4",
+                                rootWord: "effort",
+                                collocation: "make a concerted effort",
+                                ipa: "/meɪk ə kənˈsɜːr.tɪd ˈef.ərt/",
+                                meaningVi: "nỗ lực hết mình / chung sức đồng lòng",
+                                exampleEn: "Governments and citizens must make a concerted effort to reduce plastic waste.",
+                                exampleVi: "Chính phủ và người dân phải nỗ lực chung tay để giảm thiểu rác thải nhựa.",
+                                mastery: 0,
+                                srsStep: 0,
+                                nextReviewAt: now
+                            }
+                        ]
+                    }
+                ];
+            }
+
+            loadState() {
+                try {
+                    const raw = localStorage.getItem(this.STORAGE_KEY);
+                    if (raw) {
+                        const parsed = JSON.parse(raw);
+                        if (parsed && Array.isArray(parsed.decks)) {
+                            parsed.decks = parsed.decks.map(deck => ({
+                                ...deck,
+                                items: (deck.items || []).map(item => this.normalizeSrsItem(item))
+                            }));
+                            return parsed;
+                        }
+                    }
+                } catch (e) {
+                    console.warn("Failed to load state:", e);
+                }
+                const defaults = this.getDefaultDecks();
+                return {
+                    decks: defaults,
+                    activeDeckId: defaults[0]?.id || null
+                };
+            }
+
+            saveState() {
+                try {
+                    localStorage.setItem(this.STORAGE_KEY, JSON.stringify(this.state));
+                } catch (e) {
+                    console.warn("Could not save state:", e);
+                }
+            }
+
+            getDueItemsForDeck(deck) {
+                if (!deck || !Array.isArray(deck.items)) return [];
+                const now = Date.now();
+                return deck.items.filter(item => (item.nextReviewAt || 0) <= now);
+            }
+
+            getTotalDueAcrossAllDecks() {
+                return (this.state.decks || []).reduce((sum, d) => sum + this.getDueItemsForDeck(d).length, 0);
+            }
+
+            updateItemSrsSchedule(deckId, itemId, action) {
+                const deck = (this.state.decks || []).find(d => d.id === deckId);
+                if (!deck) return;
+                const item = deck.items.find(i => i.id === itemId);
+                if (!item) return;
+
+                const now = Date.now();
+                let currentStep = item.srsStep || 0;
+
+                if (action === "reset") {
+                    item.srsStep = 1;
+                    item.nextReviewAt = now + SRS_INTERVALS_DAYS[0] * DAY_MS;
+                } else if (action === "master") {
+                    const nextStep = Math.min(currentStep + 2, SRS_INTERVALS_DAYS.length);
+                    item.srsStep = nextStep;
+                    item.nextReviewAt = now + SRS_INTERVALS_DAYS[nextStep - 1] * DAY_MS;
+                } else {
+                    const nextStep = Math.min(currentStep + 1, SRS_INTERVALS_DAYS.length);
+                    item.srsStep = nextStep;
+                    item.nextReviewAt = now + SRS_INTERVALS_DAYS[nextStep - 1] * DAY_MS;
+                }
+                this.saveState();
+            }
+
+            simulateAdvanceOneDay(deckId) {
+                const deck = (this.state.decks || []).find(d => d.id === deckId);
+                if (!deck) return;
+                deck.items.forEach(item => {
+                    item.nextReviewAt = (item.nextReviewAt || Date.now()) - DAY_MS;
+                });
+                this.saveState();
+                this.showToast(`Đã tua nhanh +1 ngày cho bộ "${deck.title}"!`);
+                this.render();
+            }
+
+            startDueReviewForDeck(deckId, targetMode) {
+                this.state.activeDeckId = deckId;
+                this.saveState();
+                if (targetMode === "flashcards") {
+                    this.initFlashcards(true);
+                    this.switchTab("flashcards");
+                } else if (targetMode === "quiz") {
+                    this.initQuiz(true);
+                    this.switchTab("quiz");
+                } else if (targetMode === "writing") {
+                    this.initWriting(true);
+                    this.switchTab("writing");
+                }
+            }
+
+            // =========================================================================
+            // NAVIGATION, DECK MANAGEMENT, JSON EXPORT/IMPORT & API KEY MODAL
+            // =========================================================================
+            getActiveDeck() {
+                if (!this.state.decks || this.state.decks.length === 0) return null;
+                let found = this.state.decks.find(d => d.id === this.state.activeDeckId);
+                if (!found) {
+                    found = this.state.decks[0];
+                    this.state.activeDeckId = found.id;
+                }
+                return found;
+            }
+
+            goHome() {
+                this.stopRecording();
+                this.currentTab = "home";
+                this.render();
+            }
+
+            selectDeck(deckId, openHub = false) {
+                this.stopRecording();
+                this.state.activeDeckId = deckId;
+                this.saveState();
+                this.fcQueue = [];
+                this.quizQueue = [];
+                this.writeQueue = [];
+                this.speakingMessages = [];
+                if (openHub) {
+                    this.currentTab = "deck-hub";
+                }
+                this.render();
+            }
+
+            openDeckHub(deckId) {
+                this.stopRecording();
+                this.state.activeDeckId = deckId;
+                this.saveState();
+                this.currentTab = "deck-hub";
+                this.render();
+            }
+
+            switchTab(tabId) {
+                this.stopRecording();
+                this.currentTab = tabId;
+                if (tabId === "flashcards" && this.fcQueue.length === 0) {
+                    this.initFlashcards(false);
+                } else if (tabId === "quiz" && this.quizQueue.length === 0) {
+                    this.initQuiz(false);
+                } else if (tabId === "writing" && this.writeQueue.length === 0) {
+                    this.initWriting(false);
+                } else if (tabId === "speaking" && this.speakingMessages.length === 0) {
+                    this.initSpeakingSession();
+                }
+                this.render();
+            }
+
+            deleteDeck(deckId) {
+                const deck = (this.state.decks || []).find(d => d.id === deckId);
+                if (!deck) return;
+                const container = document.getElementById("modal-container");
+                if (!container) return;
+                container.innerHTML = `
+                    <div class="fixed inset-0 z-50 bg-slate-900/50 backdrop-blur-xs flex items-center justify-center p-4">
+                        <div class="bg-white rounded-3xl border border-pinky-200 max-w-md w-full p-6 shadow-xl space-y-4">
+                            <h3 class="font-display font-extrabold text-lg text-slate-900">Xóa file từ vựng?</h3>
+                            <p class="text-xs sm:text-sm text-slate-600">
+                                Bạn có chắc muốn xóa bộ từ <strong>"${this.escapeHtml(deck.title)}"</strong> (${deck.items.length} cụm từ) không? Hành động này không thể hoàn tác.
+                            </p>
+                            <div class="flex justify-end gap-2 pt-2">
+                                <button type="button" onclick="document.getElementById('modal-container').innerHTML = ''"
+                                    class="px-4 py-2.5 rounded-2xl bg-slate-100 hover:bg-slate-200 text-slate-700 text-xs font-bold cursor-pointer">
+                                    Hủy
+                                </button>
+                                <button type="button" onclick="app.confirmDeleteDeck('${deck.id}')"
+                                    class="px-4 py-2.5 rounded-2xl bg-rose-600 hover:bg-rose-700 text-white text-xs font-extrabold cursor-pointer">
+                                    Xóa vĩnh viễn
+                                </button>
+                            </div>
+                        </div>
+                    </div>
+                `;
+            }
+
+            confirmDeleteDeck(deckId) {
+                this.state.decks = (this.state.decks || []).filter(d => d.id !== deckId);
+                if (this.state.activeDeckId === deckId) {
+                    this.state.activeDeckId = this.state.decks[0]?.id || null;
+                }
+                this.saveState();
+                const container = document.getElementById("modal-container");
+                if (container) container.innerHTML = "";
+                this.currentTab = "home";
+                this.showToast("Đã xóa file từ vựng!");
+                this.render();
+            }
+
+            exportDeckToJson(deckId) {
+                const deck = (this.state.decks || []).find(d => d.id === deckId) || this.getActiveDeck();
+                if (!deck) return;
+                const blob = new Blob([JSON.stringify(deck, null, 2)], { type: "application/json" });
+                const url = URL.createObjectURL(blob);
+                const a = document.createElement("a");
+                const safeName = deck.title.toLowerCase().replace(/[^a-z0-9\u00C0-\u1EF9]+/gi, "-").replace(/^-|-$/g, "") || "tling-deck";
+                a.href = url;
+                a.download = `${safeName}.json`;
+                document.body.appendChild(a);
+                a.click();
+                a.remove();
+                URL.revokeObjectURL(url);
+                this.showToast(`Đã tải xuống file "${safeName}.json"!`);
+            }
+
+            importDeckFromJson(event) {
+                const file = event.target?.files?.[0];
+                if (!file) return;
+                const reader = new FileReader();
+                reader.onload = (e) => {
+                    try {
+                        const parsed = JSON.parse(e.target.result);
+                        const now = Date.now();
+                        const itemsRaw = Array.isArray(parsed) ? parsed : (parsed.items || []);
+                        if (!Array.isArray(itemsRaw) || itemsRaw.length === 0) {
+                            this.showToast("File JSON không chứa danh sách từ vựng hợp lệ!");
+                            return;
+                        }
+                        const newDeck = {
+                            id: "deck-" + now,
+                            title: parsed.title || file.name.replace(/\.json$/i, ""),
+                            createdAt: new Date().toISOString().slice(0, 10),
+                            items: itemsRaw.map((item, idx) => this.normalizeSrsItem({
+                                id: item.id || ("col-" + now + "-" + idx),
+                                rootWord: item.rootWord || item.collocation || "",
+                                collocation: item.collocation || item.word || "",
+                                ipa: item.ipa || "",
+                                meaningVi: item.meaningVi || item.meaning || "",
+                                exampleEn: item.exampleEn || "",
+                                exampleVi: item.exampleVi || "",
+                                mastery: 0
+                            }))
+                        };
+                        this.state.decks.unshift(newDeck);
+                        this.state.activeDeckId = newDeck.id;
+                        this.saveState();
+                        this.showToast(`Đã nhập thành công "${newDeck.title}" (${newDeck.items.length} cụm từ)!`);
+                        this.openDeckHub(newDeck.id);
+                    } catch (err) {
+                        this.showToast("Lỗi đọc file JSON: định dạng không hợp lệ.");
+                    }
+                };
+                reader.readAsText(file);
+                event.target.value = "";
+            }
+
             openApiKeyModal() {
                 const currentKey = localStorage.getItem("tling_gemini_api_key") || "";
                 const container = document.getElementById("modal-container");
@@ -331,7 +704,6 @@
                 utter.onerror = finishOnce;
                 window.speechSynthesis.speak(utter);
 
-                // Fallback timer in case browser speechSynthesis does not fire onend
                 if (onEndCallback) {
                     const fallbackMs = Math.min(Math.max(text.length * 75, 900), 3500);
                     setTimeout(finishOnce, fallbackMs);
@@ -339,7 +711,6 @@
             }
 
             togglePronunciationGuide(mode) {
-                const deck = this.getActiveDeck();
                 let currentItem = null;
                 if (mode === "fc") {
                     this.fcShowPronunciationTip = !this.fcShowPronunciationTip;
@@ -366,7 +737,7 @@
                                 🗣️ Hướng dẫn phát âm: <span class="font-mono text-pinky-700">${this.escapeHtml(item.ipa || "/chuẩn giọng Mỹ/")}</span>
                             </span>
                             <button type="button" onclick="app.speakEnglish('${this.escapeJs(item.collocation)}', 0.72)"
-                                class="px-3 py-1 rounded-xl bg-amber-600 text-white text-xs font-bold">
+                                class="px-3 py-1 rounded-xl bg-amber-600 text-white text-xs font-bold cursor-pointer">
                                 🐢 Đọc chậm cả cụm
                             </button>
                         </div>
@@ -374,7 +745,7 @@
                             <span class="text-[11px] text-amber-800 font-semibold mr-1">Bấm nghe từng từ:</span>
                             ${words.map(w => `
                                 <button type="button" onclick="app.speakEnglish('${this.escapeJs(w)}', 0.8)"
-                                    class="px-2.5 py-1 rounded-xl bg-white hover:bg-pinky-50 border border-amber-300 text-xs font-bold text-slate-800">
+                                    class="px-2.5 py-1 rounded-xl bg-white hover:bg-pinky-50 border border-amber-300 text-xs font-bold text-slate-800 cursor-pointer">
                                     🔊 ${this.escapeHtml(w)}
                                 </button>
                             `).join("")}
@@ -479,7 +850,7 @@
                                 <div class="bg-white rounded-3xl border border-dashed border-pinky-300 p-10 text-center space-y-4">
                                     <p class="text-sm text-slate-600">Bạn chưa có file từ vựng nào. Hãy bấm nút bên dưới để tạo bộ từ đầu tiên!</p>
                                     <button type="button" onclick="app.switchTab('creator')"
-                                        class="px-5 py-3 rounded-2xl bg-pinky-600 text-white text-xs sm:text-sm font-bold">
+                                        class="px-5 py-3 rounded-2xl bg-pinky-600 text-white text-xs sm:text-sm font-bold cursor-pointer">
                                         + Tạo bộ từ ngay
                                     </button>
                                 </div>
@@ -1140,7 +1511,6 @@ ${rawLines.map((line, i) => `${i + 1}. ${line}`).join("\n")}`;
                     this.updateItemSrsSchedule(deck.id, current.id, "master");
                 }
 
-                // Speak the current collocation one last time before advancing to the next card
                 this.speakEnglish(current.collocation, 0.95, () => {
                     this.fcIndex++;
                     this.fcFlipped = false;
@@ -1520,7 +1890,6 @@ ${rawLines.map((line, i) => `${i + 1}. ${line}`).join("\n")}`;
                     this.speakEnglish(current.collocation);
                     this.render();
                 } else {
-                    // EN -> VI: Check quickly or use AI semantic check
                     const normTargetVi = current.meaningVi.toLowerCase();
                     if (normTargetVi.includes(normUser) && normUser.length >= 3) {
                         this.writeAnswered = true;
@@ -1736,7 +2105,6 @@ Hãy đánh giá xem bản dịch của người học có đúng nghĩa không 
                 };
 
                 this.recognition.onend = () => {
-                    // Auto-restart as long as the user has NOT clicked the Stop button
                     if (this.isRecording) {
                         try {
                             this.recognition.start();
