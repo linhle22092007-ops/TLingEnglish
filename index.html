@@ -150,10 +150,10 @@
 
     <script>
         // =========================================================================
-        // GEMINI API HELPER WITH EXPONENTIAL BACKOFF
+        // GEMINI API HELPER WITH AUTOMATIC MODEL FALLBACK & DIAGNOSTICS
         // =========================================================================
         const apiKey = "";
-        const GEMINI_MODEL = "gemini-3-flash-preview";
+        const GEMINI_MODELS = ["gemini-2.5-flash", "gemini-2.0-flash"];
 
         function getEffectiveApiKey() {
             const saved = localStorage.getItem("tling_gemini_api_key");
@@ -162,7 +162,6 @@
 
         async function callGeminiAPI({ contents, systemInstruction = "", responseSchema = null }) {
             const activeKey = getEffectiveApiKey();
-            const url = `https://generativelanguage.googleapis.com/v1beta/models/${GEMINI_MODEL}:generateContent?key=${activeKey}`;
             const payload = { contents };
 
             if (systemInstruction) {
@@ -175,10 +174,10 @@
                 };
             }
 
-            const delays = [1000, 2000, 4000, 8000];
             let lastError = null;
 
-            for (let attempt = 0; attempt <= delays.length; attempt++) {
+            for (const modelName of GEMINI_MODELS) {
+                const url = `https://generativelanguage.googleapis.com/v1beta/models/${modelName}:generateContent?key=${encodeURIComponent(activeKey)}`;
                 try {
                     const response = await fetch(url, {
                         method: "POST",
@@ -187,406 +186,30 @@
                     });
 
                     if (!response.ok) {
-                        const errText = await response.text();
-                        throw new Error(`HTTP ${response.status}: ${errText}`);
+                        let detail = `HTTP ${response.status}`;
+                        try {
+                            const errJson = await response.json();
+                            detail = errJson?.error?.message || detail;
+                        } catch (_) {}
+                        throw new Error(detail);
                     }
 
                     const data = await response.json();
                     const text = data?.candidates?.[0]?.content?.parts?.[0]?.text;
                     if (!text) {
-                        throw new Error("Empty response from Gemini");
+                        throw new Error("AI trả về nội dung trống.");
                     }
                     return text;
                 } catch (err) {
                     lastError = err;
-                    if (attempt < delays.length) {
-                        await new Promise(res => setTimeout(res, delays[attempt]));
-                    }
                 }
             }
-            throw lastError;
+            throw lastError || new Error("Không thể kết nối tới Gemini API.");
         }
 
         // =========================================================================
         // SPACED REPETITION INTERVALS (1 -> 2 -> 5 -> 10 -> 20 DAYS)
-        // =========================================================================
-        const SRS_INTERVALS_DAYS = [1, 2, 5, 10, 20];
-        const DAY_MS = 24 * 60 * 60 * 1000;
-
-        // =========================================================================
-        // APPLICATION STATE & CONTROLLER
-        // =========================================================================
-        class TlingEnglishApp {
-            constructor() {
-                this.STORAGE_KEY = "tling_english_decks_v1";
-                this.state = this.loadState();
-                this.currentTab = "home"; // 'home' | 'deck-hub' | 'creator' | 'srs' | 'flashcards' | 'quiz' | 'writing' | 'speaking'
-                this.rawWordsInput = "";
-                this.newDeckTitleInput = "";
-                this.stagedCollocations = [];
-                this.isGeneratingAI = false;
-
-                // Flashcard state
-                this.fcQueue = [];
-                this.fcIndex = 0;
-                this.fcFlipped = false;
-                this.fcOnlyDue = false;
-                this.fcShowPronunciationTip = false;
-                this.fcLastDirectionHint = null;
-
-                // Quiz state
-                this.quizQueue = [];
-                this.quizIndex = 0;
-                this.quizScore = 0;
-                this.quizAnswered = false;
-                this.quizOptions = [];
-                this.quizDirection = "en-to-vi";
-                this.quizOnlyDue = false;
-                this.quizShowPronunciationTip = false;
-
-                // Writing state
-                this.writeQueue = [];
-                this.writeIndex = 0;
-                this.writeScore = 0;
-                this.writeAnswered = false;
-                this.writeDirection = "vi-to-en";
-                this.currentItemDirection = "vi-to-en";
-                this.isCheckingWritingAI = false;
-                this.writeOnlyDue = false;
-                this.writeShowPronunciationTip = false;
-                this.writeLastResult = null;
-
-                // AI Speaking Tutor state
-                this.speakingMessages = [];
-                this.targetSpeakingCollocations = [];
-                this.isSpeakingLoading = false;
-                this.isRecording = false;
-                this.recognition = null;
-                this.recordingSeconds = 0;
-                this.recordingTimer = null;
-                this.finalTranscriptBuffer = "";
-
-                this.initSpeechRecognition();
-                this.initKeyboardShortcuts();
-                this.render();
-            }
-
-            // =========================================================================
-            // STATE PERSISTENCE & DEFAULT SAMPLE DECKS
-            // =========================================================================
-            getDefaultDecks() {
-                const now = Date.now();
-                return [
-                    {
-                        id: "deck-sample-ielts",
-                        title: "IELTS Speaking & Writing Core Collocations",
-                        createdAt: new Date().toISOString().split("T")[0],
-                        items: [
-                            {
-                                id: "col-1",
-                                rootWord: "decision",
-                                collocation: "make an informed decision",
-                                ipa: "/meɪk ən ɪnˈfɔːrmd dɪˈsɪʒ.ən/",
-                                meaningVi: "đưa ra quyết định sáng suốt (dựa trên đầy đủ thông tin)",
-                                exampleEn: "Students should research carefully before they make an informed decision about their major.",
-                                exampleVi: "Sinh viên nên tìm hiểu kỹ trước khi đưa ra quyết định sáng suốt về chuyên ngành của mình.",
-                                mastery: 0,
-                                srsStep: 0,
-                                nextReviewAt: now
-                            },
-                            {
-                                id: "col-2",
-                                rootWord: "advantage",
-                                collocation: "take full advantage of",
-                                ipa: "/teɪk fʊl ədˈvæn.tɪdʒ əv/",
-                                meaningVi: "tận dụng triệt để, khai thác tối đa",
-                                exampleEn: "Young people should take full advantage of online resources to learn English.",
-                                exampleVi: "Người trẻ nên tận dụng tối đa các nguồn tài nguyên trực tuyến để học tiếng Anh.",
-                                mastery: 0,
-                                srsStep: 0,
-                                nextReviewAt: now
-                            },
-                            {
-                                id: "col-3",
-                                rootWord: "awareness",
-                                collocation: "raise public awareness of",
-                                ipa: "/reɪz ˈpʌb.lɪk əˈwer.nəs əv/",
-                                meaningVi: "nâng cao nhận thức cộng đồng về",
-                                exampleEn: "Social media campaigns can effectively raise public awareness of environmental protection.",
-                                exampleVi: "Các chiến dịch truyền thông xã hội có thể nâng cao nhận thức cộng đồng về bảo vệ môi trường.",
-                                mastery: 0,
-                                srsStep: 0,
-                                nextReviewAt: now
-                            },
-                            {
-                                id: "col-4",
-                                rootWord: "effort",
-                                collocation: "make a concerted effort",
-                                ipa: "/meɪk ə kənˈsɜːr.t̬ɪd ˈef.ɚt/",
-                                meaningVi: "nỗ lực hết mình, chung sức đồng lòng",
-                                exampleEn: "Governments and citizens must make a concerted effort to reduce plastic waste.",
-                                exampleVi: "Chính phủ và người dân phải nỗ lực chung tay để giảm thiểu rác thải nhựa.",
-                                mastery: 0,
-                                srsStep: 0,
-                                nextReviewAt: now
-                            }
-                        ]
-                    }
-                ];
-            }
-
-            normalizeSrsItem(item) {
-                return {
-                    ...item,
-                    mastery: typeof item.mastery === "number" ? item.mastery : 0,
-                    srsStep: typeof item.srsStep === "number" ? item.srsStep : 0,
-                    nextReviewAt: typeof item.nextReviewAt === "number" ? item.nextReviewAt : Date.now()
-                };
-            }
-
-            loadState() {
-                try {
-                    const raw = localStorage.getItem(this.STORAGE_KEY);
-                    if (raw) {
-                        const parsed = JSON.parse(raw);
-                        if (parsed && Array.isArray(parsed.decks)) {
-                            parsed.decks = parsed.decks.map(deck => ({
-                                ...deck,
-                                items: (deck.items || []).map(item => this.normalizeSrsItem(item))
-                            }));
-                            return parsed;
-                        }
-                    }
-                } catch (e) {
-                    console.warn("Failed to load state:", e);
-                }
-                const defaults = this.getDefaultDecks();
-                return { decks: defaults, activeDeckId: defaults[0]?.id || null };
-            }
-
-            saveState() {
-                try {
-                    localStorage.setItem(this.STORAGE_KEY, JSON.stringify(this.state));
-                } catch (e) {
-                    console.warn("Could not save state:", e);
-                }
-            }
-
-            // =========================================================================
-            // SPACED REPETITION ENGINE (1 -> 2 -> 5 -> 10 -> 20 DAYS)
-            // =========================================================================
-            getDueItemsForDeck(deck) {
-                if (!deck || !Array.isArray(deck.items)) return [];
-                const now = Date.now();
-                return deck.items.filter(item => (item.nextReviewAt || 0) <= now);
-            }
-
-            getTotalDueAcrossAllDecks() {
-                return (this.state.decks || []).reduce((sum, deck) => sum + this.getDueItemsForDeck(deck).length, 0);
-            }
-
-            updateItemSrsSchedule(deckId, itemId, isSuccess) {
-                const deck = this.state.decks.find(d => d.id === deckId);
-                if (!deck) return;
-                const item = deck.items.find(i => i.id === itemId);
-                if (!item) return;
-
-                const now = Date.now();
-                if (isSuccess) {
-                    const nextStep = Math.min((item.srsStep || 0) + 1, SRS_INTERVALS_DAYS.length);
-                    const days = SRS_INTERVALS_DAYS[nextStep - 1];
-                    item.srsStep = nextStep;
-                    item.mastery = Math.min((item.mastery || 0) + 1, 5);
-                    item.nextReviewAt = now + days * DAY_MS;
-                } else {
-                    item.srsStep = 1;
-                    item.nextReviewAt = now + SRS_INTERVALS_DAYS[0] * DAY_MS;
-                }
-                this.saveState();
-            }
-
-            simulateAdvanceOneDay(deckId) {
-                const deck = this.state.decks.find(d => d.id === deckId);
-                if (!deck) return;
-                deck.items.forEach(item => {
-                    item.nextReviewAt = (item.nextReviewAt || Date.now()) - DAY_MS;
-                });
-                this.saveState();
-                this.render();
-                this.showToast(`Đã tua nhanh +1 ngày cho bộ "${deck.title}"!`);
-            }
-
-            startDueReviewForDeck(deckId, mode) {
-                this.state.activeDeckId = deckId;
-                this.saveState();
-                this.currentTab = mode;
-                if (mode === "flashcards") {
-                    this.initFlashcards(true);
-                } else if (mode === "quiz") {
-                    this.initQuiz(true);
-                } else if (mode === "writing") {
-                    this.initWriting(true);
-                }
-                this.render();
-            }
-
-            // =========================================================================
-            // NAVIGATION, DECK HUB, DELETE MODAL, IMPORT/EXPORT & API KEY MODAL
-            // =========================================================================
-            getActiveDeck() {
-                if (!this.state.decks || this.state.decks.length === 0) return null;
-                let found = this.state.decks.find(d => d.id === this.state.activeDeckId);
-                if (!found) {
-                    found = this.state.decks[0];
-                    this.state.activeDeckId = found.id;
-                }
-                return found;
-            }
-
-            goHome() {
-                this.stopRecording();
-                this.currentTab = "home";
-                this.render();
-            }
-
-            selectDeck(deckId, openHub = false) {
-                this.stopRecording();
-                this.state.activeDeckId = deckId;
-                this.saveState();
-                this.fcQueue = [];
-                this.quizQueue = [];
-                this.writeQueue = [];
-                this.speakingMessages = [];
-                if (openHub) {
-                    this.currentTab = "deck-hub";
-                }
-                this.render();
-            }
-
-            openDeckHub(deckId) {
-                this.stopRecording();
-                this.state.activeDeckId = deckId;
-                this.saveState();
-                this.currentTab = "deck-hub";
-                this.render();
-            }
-
-            switchTab(tabId) {
-                this.stopRecording();
-                this.currentTab = tabId;
-                if (tabId === "flashcards" && this.fcQueue.length === 0) {
-                    this.initFlashcards(false);
-                } else if (tabId === "quiz" && this.quizQueue.length === 0) {
-                    this.initQuiz(false);
-                } else if (tabId === "writing" && this.writeQueue.length === 0) {
-                    this.initWriting(false);
-                } else if (tabId === "speaking" && this.speakingMessages.length === 0) {
-                    this.initSpeakingSession();
-                }
-                this.render();
-            }
-
-            deleteDeck(deckId) {
-                const deck = this.state.decks.find(d => d.id === deckId);
-                if (!deck) return;
-                const container = document.getElementById("modal-container");
-                if (!container) return;
-                container.innerHTML = `
-                    <div class="fixed inset-0 z-50 bg-slate-900/50 backdrop-blur-xs flex items-center justify-center p-4">
-                        <div class="bg-white rounded-3xl border border-pinky-200 max-w-md w-full p-6 shadow-xl space-y-4">
-                            <div class="w-12 h-12 rounded-2xl bg-rose-100 text-rose-600 flex items-center justify-center">
-                                <i data-lucide="trash-2" class="w-6 h-6"></i>
-                            </div>
-                            <h3 class="font-display font-extrabold text-lg text-slate-900">Xóa file từ vựng này?</h3>
-                            <p class="text-xs sm:text-sm text-slate-600">
-                                Bạn có chắc chắn muốn xóa bộ <strong>"${this.escapeHtml(deck.title)}"</strong> (${deck.items.length} cụm từ) không? Hành động này không thể hoàn tác.
-                            </p>
-                            <div class="flex justify-end gap-2.5 pt-2">
-                                <button type="button" onclick="document.getElementById('modal-container').innerHTML = ''"
-                                    class="px-4 py-2.5 rounded-2xl bg-slate-100 hover:bg-slate-200 text-slate-700 text-xs font-bold cursor-pointer">
-                                    Hủy
-                                </button>
-                                <button type="button" onclick="app.confirmDeleteDeck('${deck.id}')"
-                                    class="px-4 py-2.5 rounded-2xl bg-rose-600 hover:bg-rose-700 text-white text-xs font-extrabold cursor-pointer">
-                                    Xóa vĩnh viễn
-                                </button>
-                            </div>
-                        </div>
-                    </div>
-                `;
-                if (window.lucide) lucide.createIcons();
-            }
-
-            confirmDeleteDeck(deckId) {
-                this.state.decks = this.state.decks.filter(d => d.id !== deckId);
-                if (this.state.activeDeckId === deckId) {
-                    this.state.activeDeckId = this.state.decks[0]?.id || null;
-                }
-                this.saveState();
-                const container = document.getElementById("modal-container");
-                if (container) container.innerHTML = "";
-                if (this.currentTab === "deck-hub") {
-                    this.currentTab = "home";
-                }
-                this.render();
-                this.showToast("Đã xóa bộ từ vựng!");
-            }
-
-            exportDeckToJson(deckId) {
-                const deck = this.state.decks.find(d => d.id === deckId) || this.getActiveDeck();
-                if (!deck) return;
-                const blob = new Blob([JSON.stringify(deck, null, 2)], { type: "application/json" });
-                const url = URL.createObjectURL(blob);
-                const a = document.createElement("a");
-                a.href = url;
-                a.download = `${deck.title.replace(/[^a-zA-Z0-9_\u00C0-\u1EF9-]+/g, "_")}.json`;
-                document.body.appendChild(a);
-                a.click();
-                a.remove();
-                URL.revokeObjectURL(url);
-                this.showToast(`Đã xuất file "${deck.title}.json"!`);
-            }
-
-            importDeckFromJson(event) {
-                const file = event?.target?.files?.[0];
-                if (!file) return;
-                const reader = new FileReader();
-                reader.onload = (e) => {
-                    try {
-                        const parsed = JSON.parse(e.target.result);
-                        const items = Array.isArray(parsed.items) ? parsed.items : (Array.isArray(parsed) ? parsed : null);
-                        if (!items || items.length === 0) {
-                            this.showToast("File JSON không đúng định dạng bộ từ TlingEnglish!");
-                            return;
-                        }
-                        const now = Date.now();
-                        const importedDeck = {
-                            id: "deck-" + now,
-                            title: parsed.title || file.name.replace(/\.json$/i, ""),
-                            createdAt: new Date().toISOString().split("T")[0],
-                            items: items.map((it, idx) => this.normalizeSrsItem({
-                                id: "col-" + now + "-" + idx,
-                                rootWord: it.rootWord || it.collocation || "",
-                                collocation: it.collocation || it.word || "",
-                                ipa: it.ipa || "",
-                                meaningVi: it.meaningVi || it.meaning || "",
-                                exampleEn: it.exampleEn || "",
-                                exampleVi: it.exampleVi || ""
-                            }))
-                        };
-                        this.state.decks.unshift(importedDeck);
-                        this.state.activeDeckId = importedDeck.id;
-                        this.saveState();
-                        this.render();
-                        this.showToast(`Đã nhập thành công bộ "${importedDeck.title}"!`);
-                    } catch (err) {
-                        this.showToast("Lỗi đọc file JSON, vui lòng kiểm tra lại file.");
-                    }
-                };
-                reader.readAsText(file);
-                event.target.value = "";
-            }
-
+// ... existing code ... -->
             openApiKeyModal() {
                 const currentKey = localStorage.getItem("tling_gemini_api_key") || "";
                 const container = document.getElementById("modal-container");
@@ -604,25 +227,60 @@
                                 </button>
                             </div>
                             <p class="text-xs text-slate-600 leading-relaxed">
-                                Dán mã khóa <strong>Gemini API Key (AIzaSy...)</strong> của bạn vào đây để dùng tính năng AI ghép Collocation, dịch tiếng Việt tự động và chấm Speaking trên GitHub Pages. Mã được lưu riêng trên trình duyệt của bạn, không bao giờ lộ lên GitHub.
+                                Dán mã khóa <strong>Gemini API Key (bắt đầu bằng AIzaSy...)</strong> lấy miễn phí tại <a href="https://aistudio.google.com/app/apikey" target="_blank" class="text-pinky-600 font-bold underline">aistudio.google.com</a>. Mã được lưu riêng trên trình duyệt của bạn nên không bao giờ bị GitHub/Google khóa.
                             </p>
-                            <input id="modal-api-key-input" type="password" value="${this.escapeHtml(currentKey)}"
+                            <input id="modal-api-key-input" type="text" value="${this.escapeHtml(currentKey)}"
                                 placeholder="Dán mã AIzaSy... vào đây"
                                 class="w-full px-4 py-3 rounded-2xl border border-pinky-200 focus:border-pinky-500 text-xs sm:text-sm font-mono outline-hidden">
-                            <div class="flex justify-end gap-2 pt-1">
-                                <button type="button" onclick="localStorage.removeItem('tling_gemini_api_key'); document.getElementById('modal-container').innerHTML=''; app.showToast('Đã xóa API Key tùy chỉnh');"
-                                    class="px-3.5 py-2.5 rounded-2xl bg-slate-100 hover:bg-slate-200 text-slate-700 text-xs font-bold">
-                                    Xóa Key
+                            <div id="api-key-test-status" class="text-xs font-semibold hidden"></div>
+                            <div class="flex flex-wrap justify-between gap-2 pt-1">
+                                <button type="button" onclick="app.testApiKeyConnection()"
+                                    class="px-3.5 py-2.5 rounded-2xl bg-pinky-50 hover:bg-pinky-100 border border-pinky-200 text-pinky-700 text-xs font-bold cursor-pointer">
+                                    ⚡ Kiểm tra kết nối
                                 </button>
-                                <button type="button" onclick="app.saveApiKeyFromModal()"
-                                    class="px-5 py-2.5 rounded-2xl bg-pinky-600 hover:bg-pinky-700 text-white text-xs font-extrabold">
-                                    Lưu API Key
-                                </button>
+                                <div class="flex gap-2">
+                                    <button type="button" onclick="localStorage.removeItem('tling_gemini_api_key'); document.getElementById('modal-container').innerHTML=''; app.showToast('Đã xóa API Key');"
+                                        class="px-3.5 py-2.5 rounded-2xl bg-slate-100 hover:bg-slate-200 text-slate-700 text-xs font-bold cursor-pointer">
+                                        Xóa
+                                    </button>
+                                    <button type="button" onclick="app.saveApiKeyFromModal()"
+                                        class="px-5 py-2.5 rounded-2xl bg-pinky-600 hover:bg-pinky-700 text-white text-xs font-extrabold cursor-pointer">
+                                        Lưu Key
+                                    </button>
+                                </div>
                             </div>
                         </div>
                     </div>
                 `;
                 if (window.lucide) lucide.createIcons();
+            }
+
+            async testApiKeyConnection() {
+                const input = document.getElementById("modal-api-key-input");
+                const statusEl = document.getElementById("api-key-test-status");
+                const val = (input ? input.value : "").trim();
+                if (!statusEl) return;
+
+                if (!val && !apiKey) {
+                    statusEl.className = "text-xs font-semibold text-rose-600 block";
+                    statusEl.textContent = "❌ Bạn chưa dán mã AIzaSy... vào ô phía trên!";
+                    return;
+                }
+
+                if (val) localStorage.setItem("tling_gemini_api_key", val);
+                statusEl.className = "text-xs font-semibold text-pinky-600 block";
+                statusEl.textContent = "⏳ Đang kiểm tra kết nối tới Gemini AI...";
+
+                try {
+                    const reply = await callGeminiAPI({
+                        contents: [{ role: "user", parts: [{ text: "Reply with OK only." }] }]
+                    });
+                    statusEl.className = "text-xs font-bold text-emerald-600 block";
+                    statusEl.textContent = `✅ Kết nối AI thành công! (${reply.trim()})`;
+                } catch (err) {
+                    statusEl.className = "text-xs font-semibold text-rose-600 block";
+                    statusEl.textContent = `❌ Lỗi: ${err.message}`;
+                }
             }
 
             saveApiKeyFromModal() {
@@ -1051,15 +709,18 @@ ${rawLines.map((line, i) => `${i + 1}. ${line}`).join("\n")}`;
                     this.showToast(`AI đã ghép Collocation & dịch nghĩa tiếng Việt xong cho ${this.stagedCollocations.length} từ!`);
                 } catch (err) {
                     console.error(err);
-                    this.showToast("Không kết nối được AI (hãy kiểm tra nút API Key góc trên), đã tạo danh sách tạm.");
+                    const hasKey = Boolean(getEffectiveApiKey());
+                    this.showToast(hasKey
+                        ? `Lỗi AI: ${err.message}. Hãy kiểm tra lại nút API Key góc trên!`
+                        : "Bạn chưa nhập Gemini API Key! Hãy bấm nút 'API Key' ở góc trên bên phải để dán mã AIzaSy...");
                     this.stagedCollocations = rawLines.map((line, idx) => {
                         const parts = line.split(/[:\-–]/);
                         return {
                             id: "col-" + Date.now() + "-" + idx,
-                            rootWord: (parts[0] || "").trim(),
-                            collocation: (parts[0] || "").trim(),
+                            rootWord: parts[0].trim(),
+                            collocation: parts[0].trim(),
                             ipa: "",
-                            meaningVi: (parts[1] || "").trim(),
+                            meaningVi: parts[1] ? parts[1].trim() : "",
                             exampleEn: "",
                             exampleVi: ""
                         };
@@ -1070,75 +731,40 @@ ${rawLines.map((line, i) => `${i + 1}. ${line}`).join("\n")}`;
                 }
             }
 
-            async translateSingleStagedItem(index) {
-                const item = this.stagedCollocations[index];
-                if (!item || !item.collocation.trim()) return;
-
-                this.showToast(`AI đang dịch nghĩa cho "${item.collocation}"...`);
-                try {
-                    const result = await this.translateRawItemsWithAI([item.collocation]);
-                    if (result && result[0]) {
-                        this.stagedCollocations[index] = {
-                            ...item,
-                            ipa: result[0].ipa || item.ipa,
-                            meaningVi: result[0].meaningVi || item.meaningVi,
-                            exampleEn: result[0].exampleEn || item.exampleEn,
-                            exampleVi: result[0].exampleVi || item.exampleVi
-                        };
-                        this.render();
-                        this.showToast(`Đã dịch xong: "${this.stagedCollocations[index].meaningVi}"`);
-                    }
-                } catch (err) {
-                    this.showToast("Không kết nối được AI để dịch, vui lòng kiểm tra API Key.");
-                }
-            }
-
-            updateStagedField(index, field, value) {
-                if (this.stagedCollocations[index]) {
-                    this.stagedCollocations[index][field] = value;
-                }
-            }
-
-            removeStagedItem(index) {
-                this.stagedCollocations.splice(index, 1);
-                this.render();
-            }
-
-            async saveStagedDeck(alsoExportJson = false) {
-                if (this.isGeneratingAI) return;
+            async saveCreatorDeck(downloadJson = false) {
                 const titleInput = document.getElementById("creator-deck-title");
                 const wordsInput = document.getElementById("creator-raw-words");
-                const title = (titleInput ? titleInput.value : this.newDeckTitleInput).trim() || `Bộ từ ngày ${new Date().toLocaleDateString("vi-VN")}`;
+                if (titleInput) this.newDeckTitleInput = titleInput.value;
+                if (wordsInput) this.rawWordsInput = wordsInput.value;
 
-                let itemsToSave = [...this.stagedCollocations];
+                if (this.stagedCollocations.length === 0) {
+                    const rawLines = this.rawWordsInput
+                        .split(/[\n,;]+/)
+                        .map(s => s.trim())
+                        .filter(Boolean);
 
-                // If user typed English words and clicked Save directly, auto-translate Vietnamese via AI first!
-                if (itemsToSave.length === 0) {
-                    const rawText = (wordsInput ? wordsInput.value : this.rawWordsInput).trim();
-                    const lines = rawText.split(/[\n,;]+/).map(s => s.trim()).filter(Boolean);
-                    if (lines.length === 0) {
-                        this.showToast("Vui lòng nhập từ vựng trước khi lưu bộ từ!");
+                    if (rawLines.length === 0) {
+                        this.showToast("Vui lòng nhập từ vựng trước khi tạo bộ từ!");
                         return;
                     }
 
-                    // Check if any line lacks Vietnamese meaning after ':' or '-'
-                    const hasUnTranslatedLines = lines.some(l => !/[:\-–]/.test(l));
-                    if (hasUnTranslatedLines) {
+                    const linesWithoutVi = rawLines.filter(line => !/[:\-–]/.test(line));
+                    if (linesWithoutVi.length > 0) {
                         this.isGeneratingAI = true;
                         this.render();
                         try {
-                            itemsToSave = await this.translateRawItemsWithAI(lines);
+                            this.stagedCollocations = await this.translateRawItemsWithAI(rawLines);
+                            this.showToast("AI đã tự động dịch nghĩa tiếng Việt & lưu bộ từ!");
                         } catch (err) {
-                            itemsToSave = lines.map((line, idx) => {
+                            console.warn("Auto-translate fallback:", err);
+                            this.stagedCollocations = rawLines.map((line, idx) => {
                                 const parts = line.split(/[:\-–]/);
-                                const phrase = (parts[0] || "").trim();
-                                const meaning = (parts.slice(1).join("-") || "Chưa dịch nghĩa tiếng Việt").trim();
                                 return {
                                     id: "col-" + Date.now() + "-" + idx,
-                                    rootWord: phrase,
-                                    collocation: phrase,
+                                    rootWord: parts[0].trim(),
+                                    collocation: parts[0].trim(),
                                     ipa: "",
-                                    meaningVi: meaning,
+                                    meaningVi: parts[1] ? parts[1].trim() : "",
                                     exampleEn: "",
                                     exampleVi: ""
                                 };
@@ -1147,82 +773,97 @@ ${rawLines.map((line, i) => `${i + 1}. ${line}`).join("\n")}`;
                             this.isGeneratingAI = false;
                         }
                     } else {
-                        itemsToSave = lines.map((line, idx) => {
+                        this.stagedCollocations = rawLines.map((line, idx) => {
                             const parts = line.split(/[:\-–]/);
-                            const phrase = (parts[0] || "").trim();
-                            const meaning = (parts.slice(1).join("-") || "").trim();
                             return {
                                 id: "col-" + Date.now() + "-" + idx,
-                                rootWord: phrase,
-                                collocation: phrase,
+                                rootWord: parts[0].trim(),
+                                collocation: parts[0].trim(),
                                 ipa: "",
-                                meaningVi: meaning,
+                                meaningVi: parts[1] ? parts[1].trim() : "",
                                 exampleEn: "",
                                 exampleVi: ""
                             };
                         });
                     }
-                } else {
-                    // Translate any staged item that still has empty meaningVi
-                    const missingIdx = itemsToSave
-                        .map((it, i) => (!it.meaningVi || !it.meaningVi.trim() ? i : -1))
-                        .filter(i => i !== -1);
-
-                    if (missingIdx.length > 0) {
-                        this.isGeneratingAI = true;
-                        this.render();
-                        try {
-                            const translated = await this.translateRawItemsWithAI(missingIdx.map(i => itemsToSave[i].collocation));
-                            missingIdx.forEach((origIdx, tIdx) => {
-                                if (translated[tIdx]) {
-                                    itemsToSave[origIdx] = {
-                                        ...itemsToSave[origIdx],
-                                        ipa: itemsToSave[origIdx].ipa || translated[tIdx].ipa,
-                                        meaningVi: translated[tIdx].meaningVi,
-                                        exampleEn: itemsToSave[origIdx].exampleEn || translated[tIdx].exampleEn,
-                                        exampleVi: itemsToSave[origIdx].exampleVi || translated[tIdx].exampleVi
-                                    };
-                                }
-                            });
-                        } catch (e) {
-                            // Keep existing values if offline
-                        } finally {
-                            this.isGeneratingAI = false;
-                        }
-                    }
                 }
 
+                const title = (this.newDeckTitleInput || "").trim() || `Bộ từ ngày ${new Date().toLocaleDateString("vi-VN")}`;
                 const now = Date.now();
+                const items = this.stagedCollocations.map((item, idx) => ({
+                    id: item.id || ("col-" + now + "-" + idx),
+                    rootWord: (item.rootWord || item.collocation || "").trim(),
+                    collocation: (item.collocation || "").trim(),
+                    ipa: (item.ipa || "").trim(),
+                    meaningVi: (item.meaningVi || "").trim() || "(Chưa nhập nghĩa tiếng Việt)",
+                    exampleEn: (item.exampleEn || "").trim(),
+                    exampleVi: (item.exampleVi || "").trim(),
+                    mastery: 0,
+                    srsStep: 0,
+                    nextReviewAt: now
+                })).filter(i => i.collocation);
+
+                if (items.length === 0) {
+                    this.showToast("Không có cụm từ hợp lệ để lưu!");
+                    return;
+                }
+
                 const newDeck = {
                     id: "deck-" + now,
-                    title: title,
-                    createdAt: new Date().toISOString().split("T")[0],
-                    items: itemsToSave.map((it, idx) => ({
-                        ...it,
-                        id: it.id || ("col-" + now + "-" + idx),
-                        meaningVi: it.meaningVi || "Chưa có nghĩa tiếng Việt",
-                        mastery: 0,
-                        srsStep: 0,
-                        nextReviewAt: now
-                    }))
+                    title,
+                    createdAt: new Date().toISOString().slice(0, 10),
+                    items
                 };
 
                 this.state.decks.unshift(newDeck);
                 this.state.activeDeckId = newDeck.id;
                 this.saveState();
 
-                // Reset creator inputs
                 this.rawWordsInput = "";
                 this.newDeckTitleInput = "";
                 this.stagedCollocations = [];
 
-                if (alsoExportJson) {
+                this.showToast(`Đã tạo & lưu "${newDeck.title}" (${items.length} cụm từ)!`);
+
+                if (downloadJson) {
                     this.exportDeckToJson(newDeck.id);
                 }
 
-                this.currentTab = "deck-hub";
+                this.openDeckHub(newDeck.id);
+            }
+
+            async retranslateSingleStagedItem(idx) {
+                const item = this.stagedCollocations[idx];
+                if (!item || !item.collocation) return;
+                this.showToast(`Đang dịch lại "${item.collocation}" bằng AI...`);
+                try {
+                    const res = await this.translateRawItemsWithAI([item.collocation]);
+                    if (res && res[0]) {
+                        this.stagedCollocations[idx] = {
+                            ...item,
+                            collocation: res[0].collocation || item.collocation,
+                            ipa: res[0].ipa || item.ipa,
+                            meaningVi: res[0].meaningVi || item.meaningVi,
+                            exampleEn: res[0].exampleEn || item.exampleEn,
+                            exampleVi: res[0].exampleVi || item.exampleVi
+                        };
+                        this.showToast("Đã cập nhật nghĩa tiếng Việt & ví dụ!");
+                        this.render();
+                    }
+                } catch (err) {
+                    this.showToast(`Không kết nối được AI: ${err.message}`);
+                }
+            }
+
+            updateStagedField(idx, field, value) {
+                if (this.stagedCollocations[idx]) {
+                    this.stagedCollocations[idx][field] = value;
+                }
+            }
+
+            removeStagedItem(idx) {
+                this.stagedCollocations.splice(idx, 1);
                 this.render();
-                this.showToast(`Đã dịch tiếng Việt & lưu thành công bộ "${newDeck.title}"!`);
             }
 
             renderCreatorView() {
@@ -1230,53 +871,58 @@ ${rawLines.map((line, i) => `${i + 1}. ${line}`).join("\n")}`;
                     <div class="max-w-4xl mx-auto space-y-6">
                         <div class="flex items-center justify-between">
                             <button type="button" onclick="app.goHome()"
-                                class="px-4 py-2 rounded-2xl bg-white hover:bg-pinky-50 border border-pinky-200 text-pinky-700 text-xs font-bold flex items-center gap-1.5">
+                                class="px-4 py-2 rounded-2xl bg-white hover:bg-pinky-50 border border-pinky-200 text-pinky-700 text-xs font-bold flex items-center gap-1.5 cursor-pointer">
                                 <i data-lucide="arrow-left" class="w-4 h-4"></i> Quay lại Trang chủ
                             </button>
+                            <label class="px-4 py-2 rounded-2xl bg-pinky-50 hover:bg-pinky-100 border border-pinky-200 text-pinky-700 text-xs font-bold flex items-center gap-1.5 cursor-pointer">
+                                <i data-lucide="upload" class="w-3.5 h-3.5"></i> Nhập file .json có sẵn
+                                <input type="file" accept=".json" onchange="app.importDeckFromJson(event)" class="hidden">
+                            </label>
                         </div>
 
                         <div class="bg-white rounded-3xl border border-pinky-200 p-6 sm:p-8 shadow-sm space-y-5">
                             <div>
                                 <span class="px-3 py-1 rounded-full bg-pinky-100 text-pinky-700 text-xs font-bold">
-                                    Bước 1 • Tạo bộ từ &amp; Tự động dịch tiếng Việt bằng AI
+                                    AI Collocation &amp; Auto-Translate
                                 </span>
                                 <h1 class="font-display font-extrabold text-2xl text-slate-900 mt-2">
-                                    Nhập từ vựng tiếng Anh — AI tự ghép Collocation &amp; dịch tiếng Việt
+                                    Tạo Bộ Từ Vựng &amp; File Ôn Tập
                                 </h1>
-                                <p class="text-xs sm:text-sm text-slate-500 mt-1">
-                                    Bạn chỉ cần gõ các từ/cụm từ tiếng Anh (mỗi từ một dòng hoặc cách nhau dấu phẩy), AI sẽ tự động ghép thành Collocation chuẩn và dịch đầy đủ nghĩa tiếng Việt cùng câu ví dụ.
+                                <p class="text-xs sm:text-sm text-slate-600 mt-1">
+                                    Nhập các từ tiếng Anh (mỗi từ một dòng hoặc cách nhau bằng dấu phẩy). AI sẽ tự động ghép thành <strong>Collocation chuẩn</strong> và <strong>dịch nghĩa tiếng Việt</strong> đầy đủ.
                                 </p>
                             </div>
 
                             <div class="space-y-4">
                                 <div>
-                                    <label class="block text-xs font-bold text-slate-700 mb-1.5">Tên file / bộ từ vựng</label>
-                                    <input id="creator-deck-title" type="text" value="${this.escapeHtml(this.newDeckTitleInput)}"
+                                    <label class="block text-xs font-bold text-slate-700 mb-1.5">Tên bộ từ vựng / File ôn tập</label>
+                                    <input id="creator-deck-title" type="text"
+                                        value="${this.escapeHtml(this.newDeckTitleInput)}"
                                         oninput="app.newDeckTitleInput = this.value"
-                                        placeholder="Ví dụ: IELTS Topic Environment, Giao tiếp công sở..."
-                                        class="w-full px-4 py-3 rounded-2xl border border-pinky-200 focus:border-pinky-500 focus:ring-2 focus:ring-pinky-200 text-sm outline-hidden">
+                                        placeholder="Ví dụ: IELTS Speaking Topic Work & Study"
+                                        class="w-full px-4 py-3 rounded-2xl border border-pinky-200 focus:border-pinky-500 text-sm outline-hidden">
                                 </div>
 
                                 <div>
                                     <label class="block text-xs font-bold text-slate-700 mb-1.5">
-                                        Danh sách từ vựng tiếng Anh cần học
+                                        Danh sách từ tiếng Anh cần học
                                     </label>
                                     <textarea id="creator-raw-words" rows="5"
                                         oninput="app.rawWordsInput = this.value"
-                                        placeholder="Chỉ cần nhập tiếng Anh, ví dụ:&#10;decision&#10;opportunity&#10;take advantage of&#10;impact"
-                                        class="w-full p-4 rounded-2xl border border-pinky-200 focus:border-pinky-500 focus:ring-2 focus:ring-pinky-200 text-sm outline-hidden">${this.escapeHtml(this.rawWordsInput)}</textarea>
+                                        placeholder="Ví dụ:&#10;decision&#10;responsibility&#10;alleviate&#10;pay attention"
+                                        class="w-full p-4 rounded-2xl border border-pinky-200 focus:border-pinky-500 text-sm outline-hidden">${this.escapeHtml(this.rawWordsInput)}</textarea>
                                 </div>
 
-                                <div class="flex flex-wrap items-center gap-3 pt-1">
+                                <div class="flex flex-wrap items-center gap-3">
                                     <button type="button" onclick="app.generateCollocationsWithAI()" ${this.isGeneratingAI ? "disabled" : ""}
-                                        class="px-5 py-3 rounded-2xl bg-gradient-to-r from-pinky-500 to-rose-500 hover:from-pinky-600 hover:to-rose-600 disabled:opacity-60 text-white text-xs sm:text-sm font-extrabold shadow-sm flex items-center gap-2 cursor-pointer">
+                                        class="px-5 py-3.5 rounded-2xl bg-gradient-to-r from-pinky-500 to-rose-500 hover:from-pinky-600 hover:to-rose-600 disabled:opacity-60 text-white text-xs sm:text-sm font-extrabold flex items-center gap-2 shadow-sm cursor-pointer">
                                         <i data-lucide="sparkles" class="w-4 h-4"></i>
-                                        <span>${this.isGeneratingAI ? "AI đang ghép Collocation & dịch tiếng Việt..." : "Ghép Collocation & Dịch Tiếng Việt bằng AI"}</span>
+                                        <span>${this.isGeneratingAI ? "AI đang ghép cụm & dịch tiếng Việt..." : "1. Gợi ý Collocation & Dịch Tiếng Việt bằng AI"}</span>
                                     </button>
 
-                                    <button type="button" onclick="app.saveStagedDeck(false)" ${this.isGeneratingAI ? "disabled" : ""}
-                                        class="px-5 py-3 rounded-2xl bg-emerald-600 hover:bg-emerald-700 disabled:opacity-60 text-white text-xs sm:text-sm font-extrabold shadow-sm flex items-center gap-2 cursor-pointer">
-                                        <i data-lucide="check-circle" class="w-4 h-4"></i>
+                                    <button type="button" onclick="app.saveCreatorDeck(false)" ${this.isGeneratingAI ? "disabled" : ""}
+                                        class="px-5 py-3.5 rounded-2xl bg-emerald-600 hover:bg-emerald-700 disabled:opacity-60 text-white text-xs sm:text-sm font-extrabold flex items-center gap-2 shadow-sm cursor-pointer">
+                                        <i data-lucide="check-circle-2" class="w-4 h-4"></i>
                                         <span>${this.isGeneratingAI ? "Đang dịch & lưu..." : "Dịch Tiếng Việt & Lưu Bộ Từ Ngay"}</span>
                                     </button>
                                 </div>
@@ -1290,51 +936,67 @@ ${rawLines.map((line, i) => `${i + 1}. ${line}`).join("\n")}`;
                                         <h2 class="font-display font-extrabold text-lg text-slate-900">
                                             Xem trước &amp; Chỉnh sửa (${this.stagedCollocations.length} cụm từ)
                                         </h2>
-                                        <p class="text-xs text-slate-500">Bạn có thể sửa lại cụm từ hoặc bấm "Dịch lại bằng AI" cho từng dòng nếu muốn.</p>
+                                        <p class="text-xs text-slate-500">Bạn có thể sửa trực tiếp cụm từ, nghĩa tiếng Việt hoặc bấm Dịch lại bằng AI.</p>
                                     </div>
-                                    <div class="flex flex-wrap items-center gap-2">
-                                        <button type="button" onclick="app.saveStagedDeck(false)"
-                                            class="px-5 py-2.5 rounded-2xl bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-extrabold flex items-center gap-1.5 shadow-xs cursor-pointer">
-                                            <i data-lucide="save" class="w-4 h-4"></i>
-                                            <span>Lưu Bộ Từ &amp; Học Ngay</span>
+                                    <div class="flex flex-wrap gap-2">
+                                        <button type="button" onclick="app.saveCreatorDeck(false)"
+                                            class="px-4 py-2.5 rounded-2xl bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-extrabold flex items-center gap-1.5 cursor-pointer">
+                                            <i data-lucide="save" class="w-4 h-4"></i> Lưu Bộ Từ
                                         </button>
-                                        <button type="button" onclick="app.saveStagedDeck(true)"
-                                            class="px-4 py-2.5 rounded-2xl bg-pinky-600 hover:bg-pinky-700 text-white text-xs font-bold flex items-center gap-1.5 cursor-pointer">
-                                            <i data-lucide="download" class="w-4 h-4"></i>
-                                            <span>Lưu &amp; Tải File .json</span>
+                                        <button type="button" onclick="app.saveCreatorDeck(true)"
+                                            class="px-4 py-2.5 rounded-2xl bg-pinky-600 hover:bg-pinky-700 text-white text-xs font-extrabold flex items-center gap-1.5 cursor-pointer">
+                                            <i data-lucide="download" class="w-4 h-4"></i> Lưu &amp; Xuất File .json
                                         </button>
                                     </div>
                                 </div>
 
                                 <div class="space-y-3">
                                     ${this.stagedCollocations.map((item, idx) => `
-                                        <div class="p-4 rounded-2xl bg-pinky-50/60 border border-pinky-200 space-y-2.5">
+                                        <div class="p-4 rounded-2xl bg-pinky-50/50 border border-pinky-200 space-y-2.5">
                                             <div class="flex items-center justify-between gap-2">
-                                                <span class="text-xs font-extrabold text-pinky-700">#${idx + 1} • Từ gốc: ${this.escapeHtml(item.rootWord)} ${item.ipa ? `<span class="font-mono font-normal text-slate-500">(${this.escapeHtml(item.ipa)})</span>` : ""}</span>
-                                                <div class="flex items-center gap-3">
-                                                    <button type="button" onclick="app.translateSingleStagedItem(${idx})"
-                                                        class="text-pinky-600 hover:text-pinky-800 text-xs font-bold flex items-center gap-1">
-                                                        <i data-lucide="languages" class="w-3.5 h-3.5"></i> Dịch lại bằng AI
+                                                <span class="text-xs font-extrabold text-pinky-700">#${idx + 1} • Từ gốc: ${this.escapeHtml(item.rootWord || "")}</span>
+                                                <div class="flex items-center gap-1.5">
+                                                    <button type="button" onclick="app.retranslateSingleStagedItem(${idx})"
+                                                        class="px-2.5 py-1 rounded-xl bg-white hover:bg-pinky-100 border border-pinky-200 text-pinky-700 text-[11px] font-bold cursor-pointer">
+                                                        🔄 Dịch lại bằng AI
                                                     </button>
-                                                    <button type="button" onclick="app.removeStagedItem(${idx})" class="text-rose-500 hover:text-rose-700 text-xs font-bold">
-                                                        Xóa dòng
+                                                    <button type="button" onclick="app.removeStagedItem(${idx})"
+                                                        class="p-1.5 rounded-xl bg-rose-50 hover:bg-rose-100 text-rose-600 cursor-pointer">
+                                                        <i data-lucide="trash-2" class="w-3.5 h-3.5"></i>
                                                     </button>
                                                 </div>
                                             </div>
+
                                             <div class="grid grid-cols-1 sm:grid-cols-2 gap-2.5">
-                                                <input type="text" value="${this.escapeHtml(item.collocation)}"
-                                                    oninput="app.updateStagedField(${idx}, 'collocation', this.value)"
-                                                    placeholder="Cụm từ Collocation tiếng Anh"
-                                                    class="px-3.5 py-2 rounded-xl bg-white border border-pinky-200 text-xs sm:text-sm font-bold text-pinky-800">
-                                                <input type="text" value="${this.escapeHtml(item.meaningVi)}"
-                                                    oninput="app.updateStagedField(${idx}, 'meaningVi', this.value)"
-                                                    placeholder="Nghĩa tiếng Việt (AI tự dịch)"
-                                                    class="px-3.5 py-2 rounded-xl bg-white border border-pinky-200 text-xs sm:text-sm font-semibold text-slate-800">
+                                                <div>
+                                                    <label class="block text-[11px] font-bold text-slate-600 mb-1">Cụm từ (Collocation)</label>
+                                                    <input type="text" value="${this.escapeHtml(item.collocation)}"
+                                                        oninput="app.updateStagedField(${idx}, 'collocation', this.value)"
+                                                        class="w-full px-3 py-2 rounded-xl bg-white border border-pinky-200 text-xs sm:text-sm font-bold text-slate-900">
+                                                </div>
+                                                <div>
+                                                    <label class="block text-[11px] font-bold text-slate-600 mb-1">Nghĩa Tiếng Việt</label>
+                                                    <input type="text" value="${this.escapeHtml(item.meaningVi)}"
+                                                        oninput="app.updateStagedField(${idx}, 'meaningVi', this.value)"
+                                                        placeholder="Nhập nghĩa tiếng Việt..."
+                                                        class="w-full px-3 py-2 rounded-xl bg-white border border-pinky-200 text-xs sm:text-sm font-semibold text-pinky-800">
+                                                </div>
                                             </div>
-                                            <input type="text" value="${this.escapeHtml(item.exampleEn)}"
-                                                oninput="app.updateStagedField(${idx}, 'exampleEn', this.value)"
-                                                placeholder="Câu ví dụ tiếng Anh"
-                                                class="w-full px-3.5 py-2 rounded-xl bg-white border border-pinky-200 text-xs text-slate-600">
+
+                                            <div class="grid grid-cols-1 sm:grid-cols-2 gap-2.5">
+                                                <div>
+                                                    <label class="block text-[11px] font-bold text-slate-500 mb-1">Ví dụ tiếng Anh</label>
+                                                    <input type="text" value="${this.escapeHtml(item.exampleEn || "")}"
+                                                        oninput="app.updateStagedField(${idx}, 'exampleEn', this.value)"
+                                                        class="w-full px-3 py-1.5 rounded-xl bg-white border border-pinky-100 text-xs text-slate-700">
+                                                </div>
+                                                <div>
+                                                    <label class="block text-[11px] font-bold text-slate-500 mb-1">Dịch ví dụ tiếng Việt</label>
+                                                    <input type="text" value="${this.escapeHtml(item.exampleVi || "")}"
+                                                        oninput="app.updateStagedField(${idx}, 'exampleVi', this.value)"
+                                                        class="w-full px-3 py-1.5 rounded-xl bg-white border border-pinky-100 text-xs text-slate-600">
+                                                </div>
+                                            </div>
                                         </div>
                                     `).join("")}
                                 </div>
@@ -1345,94 +1007,91 @@ ${rawLines.map((line, i) => `${i + 1}. ${line}`).join("\n")}`;
             }
 
             // =========================================================================
-            // 2. SPACED REPETITION SCHEDULE VIEW (1 - 2 - 5 - 10 - 20 DAYS)
+            // 2. SPACED REPETITION SCHEDULE VIEW (1 -> 2 -> 5 -> 10 -> 20 DAYS)
             // =========================================================================
             renderSrsScheduleView() {
                 const decks = this.state.decks || [];
-                if (decks.length === 0) {
-                    return this.renderEmptyDeckPrompt("Lịch ôn tập");
-                }
-
                 return `
                     <div class="space-y-6">
-                        <div class="bg-white rounded-3xl border border-pinky-200 p-6 shadow-sm flex flex-col sm:flex-row sm:items-center justify-between gap-4">
-                            <div>
-                                <span class="px-3 py-1 rounded-full bg-amber-100 text-amber-800 text-xs font-bold">
-                                    Chu kỳ ghi nhớ khoa học: 1 ngày → 2 ngày → 5 ngày → 10 ngày → 20 ngày
-                                </span>
-                                <h1 class="font-display font-extrabold text-2xl text-slate-900 mt-2">
-                                    Lịch ôn tập lặp lại theo từng bộ riêng
-                                </h1>
-                                <p class="text-xs sm:text-sm text-slate-500 mt-1">
-                                    Mỗi bộ từ có lịch trình độc lập. Khi bạn trả lời đúng trong Flashcards, Trắc nghiệm hoặc Tập viết, từ sẽ tự động giãn sang mốc ngày tiếp theo.
-                                </p>
-                            </div>
+                        <div class="flex items-center justify-between">
+                            <button type="button" onclick="app.goHome()"
+                                class="px-4 py-2 rounded-2xl bg-white hover:bg-pinky-50 border border-pinky-200 text-pinky-700 text-xs font-bold flex items-center gap-1.5 cursor-pointer">
+                                <i data-lucide="arrow-left" class="w-4 h-4"></i> Quay lại Trang chủ
+                            </button>
+                        </div>
+
+                        <div class="bg-white rounded-3xl border border-pinky-200 p-6 sm:p-8 shadow-sm">
+                            <span class="px-3 py-1 rounded-full bg-amber-100 text-amber-800 text-xs font-extrabold">
+                                Lặp lại ngắt quãng khoa học
+                            </span>
+                            <h1 class="font-display font-extrabold text-2xl text-slate-900 mt-2">
+                                Lịch Ôn Tập Theo Chu Kỳ (1 → 2 → 5 → 10 → 20 Ngày)
+                            </h1>
+                            <p class="text-xs sm:text-sm text-slate-600 mt-1">
+                                Mỗi bộ từ có lịch nhắc ôn riêng biệt. Khi bạn trả lời đúng, từ sẽ tự động giãn sang mốc ngày tiếp theo; nếu quên sẽ quay lại mốc 1 ngày.
+                            </p>
                         </div>
 
                         <div class="space-y-4">
                             ${decks.map(deck => {
                                 const dueItems = this.getDueItemsForDeck(deck);
-                                const counts = [0, 1, 2, 3, 4, 5].map(step =>
-                                    deck.items.filter(i => (i.srsStep || 0) === step).length
-                                );
-
+                                const counts = [0, 1, 2, 3, 4, 5].map(step => deck.items.filter(i => (i.srsStep || 0) === step).length);
                                 return `
                                     <div class="bg-white rounded-3xl border border-pinky-200 p-6 shadow-xs space-y-4">
-                                        <div class="flex flex-col md:flex-row md:items-center justify-between gap-3">
+                                        <div class="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
                                             <div>
-                                                <div class="flex items-center gap-2">
-                                                    <h3 class="font-display font-extrabold text-lg text-slate-900">${this.escapeHtml(deck.title)}</h3>
-                                                    <span class="px-2.5 py-0.5 rounded-full ${dueItems.length > 0 ? 'bg-rose-100 text-rose-700' : 'bg-emerald-100 text-emerald-700'} text-xs font-extrabold">
-                                                        ${dueItems.length > 0 ? `Đến hạn: ${dueItems.length} từ` : "Hoàn thành hôm nay"}
-                                                    </span>
-                                                </div>
-                                                <p class="text-xs text-slate-500 mt-0.5">Tổng số: ${deck.items.length} cụm từ</p>
+                                                <h3 class="font-display font-extrabold text-lg text-slate-900">${this.escapeHtml(deck.title)}</h3>
+                                                <p class="text-xs text-slate-500">Tổng ${deck.items.length} cụm từ • Đến hạn hôm nay: <strong class="text-rose-600">${dueItems.length} từ</strong></p>
                                             </div>
-
                                             <div class="flex flex-wrap items-center gap-2">
                                                 <button type="button" onclick="app.simulateAdvanceOneDay('${deck.id}')"
-                                                    class="px-3 py-2 rounded-xl bg-slate-100 hover:bg-slate-200 text-slate-700 text-xs font-bold">
+                                                    class="px-3 py-2 rounded-xl bg-slate-100 hover:bg-slate-200 text-slate-700 text-xs font-bold cursor-pointer">
                                                     ⏩ Tua +1 ngày (Test)
                                                 </button>
-                                                <button type="button" onclick="app.startDueReviewForDeck('${deck.id}', 'flashcards')"
-                                                    class="px-3.5 py-2 rounded-xl bg-pinky-600 hover:bg-pinky-700 text-white text-xs font-bold">
-                                                    Ôn Flashcards (${dueItems.length})
-                                                </button>
-                                                <button type="button" onclick="app.startDueReviewForDeck('${deck.id}', 'quiz')"
-                                                    class="px-3.5 py-2 rounded-xl bg-purple-600 hover:bg-purple-700 text-white text-xs font-bold">
-                                                    Ôn Trắc nghiệm
-                                                </button>
-                                                <button type="button" onclick="app.startDueReviewForDeck('${deck.id}', 'writing')"
-                                                    class="px-3.5 py-2 rounded-xl bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-bold">
-                                                    Ôn Tập viết
-                                                </button>
+                                                ${dueItems.length > 0 ? `
+                                                    <button type="button" onclick="app.startDueReviewForDeck('${deck.id}', 'flashcards')"
+                                                        class="px-3.5 py-2 rounded-xl bg-pinky-600 hover:bg-pinky-700 text-white text-xs font-extrabold cursor-pointer">
+                                                        Ôn Flashcards (${dueItems.length})
+                                                    </button>
+                                                    <button type="button" onclick="app.startDueReviewForDeck('${deck.id}', 'quiz')"
+                                                        class="px-3.5 py-2 rounded-xl bg-purple-600 hover:bg-purple-700 text-white text-xs font-extrabold cursor-pointer">
+                                                        Trắc nghiệm (${dueItems.length})
+                                                    </button>
+                                                    <button type="button" onclick="app.startDueReviewForDeck('${deck.id}', 'writing')"
+                                                        class="px-3.5 py-2 rounded-xl bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-extrabold cursor-pointer">
+                                                        Tập viết (${dueItems.length})
+                                                    </button>
+                                                ` : `
+                                                    <span class="px-3.5 py-2 rounded-xl bg-emerald-50 text-emerald-700 text-xs font-bold">
+                                                        ✅ Đã hoàn thành lịch ôn hôm nay
+                                                    </span>
+                                                `}
                                             </div>
                                         </div>
 
-                                        <!-- Stage Breakdown Pills -->
-                                        <div class="grid grid-cols-2 sm:grid-cols-6 gap-2">
-                                            <div class="p-2.5 rounded-2xl bg-slate-50 border border-slate-200 text-center">
-                                                <div class="text-[11px] font-semibold text-slate-500">Chưa học</div>
+                                        <div class="grid grid-cols-2 sm:grid-cols-6 gap-2 text-center">
+                                            <div class="p-2.5 rounded-2xl bg-slate-50 border border-slate-200">
+                                                <div class="text-[11px] font-bold text-slate-500">Chưa học</div>
                                                 <div class="font-display font-extrabold text-base text-slate-800">${counts[0]}</div>
                                             </div>
-                                            <div class="p-2.5 rounded-2xl bg-rose-50 border border-rose-200 text-center">
-                                                <div class="text-[11px] font-semibold text-rose-600">Mốc 1 ngày</div>
-                                                <div class="font-display font-extrabold text-base text-rose-800">${counts[1]}</div>
+                                            <div class="p-2.5 rounded-2xl bg-pinky-50 border border-pinky-200">
+                                                <div class="text-[11px] font-bold text-pinky-600">Mốc 1 ngày</div>
+                                                <div class="font-display font-extrabold text-base text-pinky-800">${counts[1]}</div>
                                             </div>
-                                            <div class="p-2.5 rounded-2xl bg-amber-50 border border-amber-200 text-center">
-                                                <div class="text-[11px] font-semibold text-amber-600">Mốc 2 ngày</div>
-                                                <div class="font-display font-extrabold text-base text-amber-800">${counts[2]}</div>
+                                            <div class="p-2.5 rounded-2xl bg-purple-50 border border-purple-200">
+                                                <div class="text-[11px] font-bold text-purple-600">Mốc 2 ngày</div>
+                                                <div class="font-display font-extrabold text-base text-purple-800">${counts[2]}</div>
                                             </div>
-                                            <div class="p-2.5 rounded-2xl bg-pinky-50 border border-pinky-200 text-center">
-                                                <div class="text-[11px] font-semibold text-pinky-600">Mốc 5 ngày</div>
-                                                <div class="font-display font-extrabold text-base text-pinky-800">${counts[3]}</div>
+                                            <div class="p-2.5 rounded-2xl bg-blue-50 border border-blue-200">
+                                                <div class="text-[11px] font-bold text-blue-600">Mốc 5 ngày</div>
+                                                <div class="font-display font-extrabold text-base text-blue-800">${counts[3]}</div>
                                             </div>
-                                            <div class="p-2.5 rounded-2xl bg-purple-50 border border-purple-200 text-center">
-                                                <div class="text-[11px] font-semibold text-purple-600">Mốc 10 ngày</div>
-                                                <div class="font-display font-extrabold text-base text-purple-800">${counts[4]}</div>
+                                            <div class="p-2.5 rounded-2xl bg-teal-50 border border-teal-200">
+                                                <div class="text-[11px] font-bold text-teal-600">Mốc 10 ngày</div>
+                                                <div class="font-display font-extrabold text-base text-teal-800">${counts[4]}</div>
                                             </div>
-                                            <div class="p-2.5 rounded-2xl bg-emerald-50 border border-emerald-200 text-center">
-                                                <div class="text-[11px] font-semibold text-emerald-600">Mốc 20 ngày</div>
+                                            <div class="p-2.5 rounded-2xl bg-emerald-50 border border-emerald-200">
+                                                <div class="text-[11px] font-bold text-emerald-600">Mốc 20 ngày</div>
                                                 <div class="font-display font-extrabold text-base text-emerald-800">${counts[5]}</div>
                                             </div>
                                         </div>
@@ -1445,19 +1104,19 @@ ${rawLines.map((line, i) => `${i + 1}. ${line}`).join("\n")}`;
             }
 
             // =========================================================================
-            // 3. FLASHCARDS VIEW (< / > KEYBOARD SHORTCUTS + PRONUNCIATION GUIDE)
+            // 3. FLASHCARDS VIEW (3D FLIP, < / > SHORTCUTS, PRONUNCIATION & REPLAY)
             // =========================================================================
             initFlashcards(onlyDue = false) {
                 const deck = this.getActiveDeck();
                 if (!deck) return;
                 this.fcOnlyDue = onlyDue;
                 const pool = onlyDue ? this.getDueItemsForDeck(deck) : deck.items;
-                this.fcQueue = this.shuffleArray(pool.length > 0 ? pool : deck.items);
+                this.fcQueue = pool.map(item => ({ ...item }));
                 this.fcIndex = 0;
                 this.fcFlipped = false;
                 this.fcShowPronunciationTip = false;
                 this.fcLastDirectionHint = null;
-                if (this.fcQueue[0]) {
+                if (this.fcQueue.length > 0) {
                     setTimeout(() => this.speakEnglish(this.fcQueue[0].collocation), 200);
                 }
             }
@@ -1467,28 +1126,29 @@ ${rawLines.map((line, i) => `${i + 1}. ${line}`).join("\n")}`;
                 this.render();
             }
 
-            rateFlashcard(rating) {
+            rateFlashcard(quality) {
                 const deck = this.getActiveDeck();
                 const current = this.fcQueue[this.fcIndex];
                 if (!deck || !current) return;
 
-                const isMastered = rating === "easy" || rating === "good";
-                this.updateItemSrsSchedule(deck.id, current.id, isMastered);
-
-                if (!isMastered) {
-                    // Re-queue near end of current session for active recall
-                    this.fcQueue.push(current);
+                if (quality === "hard") {
+                    this.updateItemSrsSchedule(deck.id, current.id, "reset");
+                    this.fcQueue.push({ ...current });
+                } else if (quality === "good") {
+                    this.updateItemSrsSchedule(deck.id, current.id, "advance");
+                } else {
+                    this.updateItemSrsSchedule(deck.id, current.id, "master");
                 }
 
-                // Pronounce the current phrase once more before moving to the next card
-                this.speakEnglish(current.collocation, 0.92, () => {
+                // Speak the current collocation one last time before advancing to the next card
+                this.speakEnglish(current.collocation, 0.95, () => {
                     this.fcIndex++;
                     this.fcFlipped = false;
                     this.fcShowPronunciationTip = false;
                     this.fcLastDirectionHint = null;
                     this.render();
-                    if (this.fcQueue[this.fcIndex]) {
-                        setTimeout(() => this.speakEnglish(this.fcQueue[this.fcIndex].collocation), 220);
+                    if (this.fcIndex < this.fcQueue.length) {
+                        setTimeout(() => this.speakEnglish(this.fcQueue[this.fcIndex].collocation), 250);
                     }
                 });
             }
@@ -1496,115 +1156,118 @@ ${rawLines.map((line, i) => `${i + 1}. ${line}`).join("\n")}`;
             renderFlashcardsView() {
                 const deck = this.getActiveDeck();
                 if (!deck || deck.items.length === 0) {
-                    return this.renderEmptyDeckPrompt("Flashcards");
-                }
-                if (this.fcQueue.length === 0) {
-                    this.initFlashcards(false);
+                    return `<div class="bg-white rounded-3xl p-8 text-center">Bộ từ hiện chưa có từ vựng nào.</div>`;
                 }
 
                 if (this.fcIndex >= this.fcQueue.length) {
                     return `
-                        <div class="max-w-xl mx-auto bg-white rounded-3xl border border-pinky-200 p-8 text-center space-y-5 shadow-sm">
-                            <div class="w-16 h-16 rounded-3xl bg-emerald-100 text-emerald-600 flex items-center justify-center mx-auto">
-                                <i data-lucide="party-popper" class="w-8 h-8"></i>
+                        <div class="max-w-xl mx-auto bg-white rounded-3xl border border-pinky-200 p-8 text-center space-y-4 shadow-sm">
+                            <div class="w-14 h-14 rounded-full bg-emerald-100 text-emerald-600 flex items-center justify-center mx-auto">
+                                <i data-lucide="trophy" class="w-7 h-7"></i>
                             </div>
                             <h2 class="font-display font-extrabold text-2xl text-slate-900">Hoàn thành phiên Flashcards!</h2>
-                            <p class="text-sm text-slate-600">Lịch ôn tập 1-2-5-10 ngày của bộ <strong>${this.escapeHtml(deck.title)}</strong> đã được tự động cập nhật.</p>
-                            <div class="flex flex-wrap justify-center gap-3">
+                            <p class="text-sm text-slate-600">Lịch ôn tập lặp lại 1-2-5-10 ngày đã được cập nhật tự động cho bộ từ này.</p>
+                            <div class="flex justify-center gap-3 pt-2">
                                 <button type="button" onclick="app.initFlashcards(false); app.render()"
-                                    class="px-5 py-3 rounded-2xl bg-pinky-600 text-white text-xs sm:text-sm font-bold">
+                                    class="px-5 py-3 rounded-2xl bg-pinky-600 text-white text-xs sm:text-sm font-bold cursor-pointer">
                                     Học lại từ đầu
                                 </button>
                                 <button type="button" onclick="app.openDeckHub('${deck.id}')"
-                                    class="px-5 py-3 rounded-2xl bg-pinky-50 text-pinky-700 border border-pinky-200 text-xs sm:text-sm font-bold">
-                                    Về bộ từ
+                                    class="px-5 py-3 rounded-2xl bg-pinky-50 text-pinky-700 text-xs sm:text-sm font-bold cursor-pointer">
+                                    Về trang bộ từ
                                 </button>
                             </div>
                         </div>
                     `;
                 }
 
-                const item = this.fcQueue[this.fcIndex];
-                const nextStep = Math.min((item.srsStep || 0) + 1, SRS_INTERVALS_DAYS.length);
-                const nextDays = SRS_INTERVALS_DAYS[nextStep - 1];
+                const card = this.fcQueue[this.fcIndex];
+                const nextDays = SRS_INTERVALS_DAYS[Math.min((card.srsStep || 0) + 1, 5) - 1];
 
                 return `
                     <div class="max-w-2xl mx-auto space-y-5">
-                        <!-- Top Bar -->
-                        <div class="flex flex-wrap items-center justify-between gap-2">
-                            <button type="button" onclick="app.openDeckHub('${deck.id}')" class="text-xs font-bold text-pinky-700 hover:underline flex items-center gap-1">
-                                <i data-lucide="arrow-left" class="w-4 h-4"></i> Bộ: ${this.escapeHtml(deck.title)}
+                        <div class="flex items-center justify-between text-xs font-bold text-slate-600">
+                            <button type="button" onclick="app.openDeckHub('${deck.id}')" class="text-pinky-700 hover:underline flex items-center gap-1 cursor-pointer">
+                                <i data-lucide="arrow-left" class="w-3.5 h-3.5"></i> ${this.escapeHtml(deck.title)}
                             </button>
-                            <span class="px-3 py-1 rounded-full bg-pinky-100 text-pinky-800 text-xs font-extrabold">
-                                Thẻ ${this.fcIndex + 1} / ${this.fcQueue.length}
-                            </span>
+                            <span>Thẻ ${this.fcIndex + 1} / ${this.fcQueue.length}</span>
                         </div>
 
-                        <!-- Flashcard Box -->
-                        <div onclick="app.flipFlashcard()"
-                            class="bg-white rounded-3xl border-2 ${this.fcLastDirectionHint === 'left' ? 'border-rose-400' : this.fcLastDirectionHint === 'right' ? 'border-emerald-400' : 'border-pinky-200'} p-7 sm:p-10 min-h-[290px] flex flex-col justify-between items-center text-center shadow-sm hover:shadow-md transition-all cursor-pointer select-none">
-                            <div class="w-full flex items-center justify-between text-xs">
-                                <span class="px-2.5 py-1 rounded-full bg-pinky-50 text-pinky-700 font-bold">
-                                    ${this.fcFlipped ? "Mặt sau • Nghĩa & Ví dụ" : "Mặt trước • Cụm từ Collocation"}
-                                </span>
-                                <span class="text-slate-400 font-medium">Bấm thẻ hoặc phím Space để lật</span>
-                            </div>
-
-                            ${!this.fcFlipped ? `
-                                <div class="my-6 space-y-3">
+                        <!-- Flashcard Container -->
+                        <div onclick="app.flipFlashcard()" class="perspective-1000 cursor-pointer select-none">
+                            <div class="relative w-full min-h-[290px] transition-transform duration-500 transform-style-3d ${this.fcFlipped ? 'rotate-y-180' : ''}">
+                                <!-- Front -->
+                                <div class="absolute inset-0 backface-hidden bg-white rounded-3xl border-2 border-pinky-200 p-8 shadow-sm flex flex-col items-center justify-center text-center space-y-4">
+                                    <span class="px-3 py-1 rounded-full bg-pinky-50 text-pinky-600 text-xs font-bold">
+                                        Collocation • Bấm thẻ hoặc phím Space để lật
+                                    </span>
                                     <h2 class="font-display font-extrabold text-2xl sm:text-4xl text-slate-900">
-                                        ${this.escapeHtml(item.collocation)}
+                                        ${this.escapeHtml(card.collocation)}
                                     </h2>
-                                    <p class="text-sm font-mono text-pinky-600">${this.escapeHtml(item.ipa || "")}</p>
-                                    <div class="pt-2 flex items-center justify-center gap-2" onclick="event.stopPropagation()">
-                                        <button type="button" onclick="app.speakEnglish('${this.escapeJs(item.collocation)}')"
-                                            class="px-4 py-2 rounded-2xl bg-pinky-100 hover:bg-pinky-200 text-pinky-800 text-xs font-bold flex items-center gap-1.5">
-                                            <i data-lucide="volume-2" class="w-4 h-4"></i> Nghe phát âm (A)
+                                    ${card.ipa ? `<p class="text-sm font-mono text-pinky-600">${this.escapeHtml(card.ipa)}</p>` : ""}
+                                    <div class="flex items-center gap-2 pt-2" onclick="event.stopPropagation()">
+                                        <button type="button" onclick="app.speakEnglish('${this.escapeJs(card.collocation)}')"
+                                            class="px-4 py-2 rounded-2xl bg-pinky-100 hover:bg-pinky-200 text-pinky-800 text-xs font-extrabold flex items-center gap-1.5 cursor-pointer">
+                                            <i data-lucide="volume-2" class="w-4 h-4"></i> Nghe (A)
                                         </button>
                                         <button type="button" onclick="app.togglePronunciationGuide('fc')"
-                                            class="px-4 py-2 rounded-2xl bg-white hover:bg-pinky-50 border border-pinky-200 text-pinky-700 text-xs font-bold flex items-center gap-1.5">
-                                            <i data-lucide="ear" class="w-4 h-4"></i> Cách đọc (P)
+                                            class="px-4 py-2 rounded-2xl bg-amber-100 hover:bg-amber-200 text-amber-900 text-xs font-extrabold flex items-center gap-1.5 cursor-pointer">
+                                            🗣️ Cách đọc (P)
                                         </button>
                                     </div>
                                 </div>
-                            ` : `
-                                <div class="my-5 space-y-3 w-full">
-                                    <div class="text-xs font-bold uppercase tracking-wider text-pinky-500">${this.escapeHtml(item.collocation)}</div>
-                                    <h3 class="font-display font-extrabold text-xl sm:text-2xl text-slate-900">
-                                        ${this.escapeHtml(item.meaningVi)}
+
+                                <!-- Back -->
+                                <div class="absolute inset-0 backface-hidden rotate-y-180 bg-gradient-to-br from-pinky-50 to-white rounded-3xl border-2 border-pinky-300 p-8 shadow-sm flex flex-col items-center justify-center text-center space-y-4">
+                                    <span class="px-3 py-1 rounded-full bg-pinky-600 text-white text-xs font-bold">
+                                        Nghĩa Tiếng Việt &amp; Ngữ Cảnh
+                                    </span>
+                                    <h3 class="font-display font-extrabold text-xl sm:text-2xl text-pinky-900">
+                                        ${this.escapeHtml(card.meaningVi)}
                                     </h3>
-                                    ${item.exampleEn ? `
-                                        <div class="p-4 rounded-2xl bg-pinky-50/80 border border-pinky-100 text-left space-y-1">
-                                            <p class="text-xs sm:text-sm font-semibold text-slate-800">"${this.escapeHtml(item.exampleEn)}"</p>
-                                            ${item.exampleVi ? `<p class="text-xs text-slate-500">${this.escapeHtml(item.exampleVi)}</p>` : ""}
+                                    ${card.exampleEn ? `
+                                        <div class="p-4 rounded-2xl bg-white/90 border border-pinky-200 max-w-lg space-y-1">
+                                            <p class="text-xs sm:text-sm font-semibold text-slate-800">"${this.escapeHtml(card.exampleEn)}"</p>
+                                            ${card.exampleVi ? `<p class="text-xs text-slate-500">${this.escapeHtml(card.exampleVi)}</p>` : ""}
                                         </div>
                                     ` : ""}
                                 </div>
-                            `}
-
-                            <div class="text-[11px] text-slate-400">
-                                Phím tắt: <kbd class="px-1.5 py-0.5 bg-slate-100 rounded border">&lt; / ←</kbd> Chưa thuộc &nbsp;•&nbsp; <kbd class="px-1.5 py-0.5 bg-slate-100 rounded border">&gt; / →</kbd> Thuộc rồi
                             </div>
                         </div>
 
-                        ${this.fcShowPronunciationTip ? this.renderPronunciationGuideBox(item) : ""}
+                        ${this.fcShowPronunciationTip ? this.renderPronunciationGuideBox(card) : ""}
 
-                        <!-- Rating Controls (< Chưa thuộc | Thuộc rồi >) -->
-                        <div class="grid grid-cols-2 gap-3">
+                        <!-- Example transition preview box -->
+                        ${card.exampleEn ? `
+                            <div class="p-4 rounded-2xl bg-white border border-pinky-100 flex items-center justify-between gap-3">
+                                <div class="text-xs text-slate-600">
+                                    <span class="font-bold text-pinky-700">Ví dụ dùng cụm từ:</span> "${this.escapeHtml(card.exampleEn)}"
+                                </div>
+                                <button type="button" onclick="app.speakEnglish('${this.escapeJs(card.exampleEn)}')"
+                                    class="p-2 rounded-xl bg-pinky-50 hover:bg-pinky-100 text-pinky-700 shrink-0 cursor-pointer">
+                                    <i data-lucide="volume-2" class="w-4 h-4"></i>
+                                </button>
+                            </div>
+                        ` : ""}
+
+                        <!-- Rating Controls with < and > shortcuts -->
+                        <div class="grid grid-cols-3 gap-3">
                             <button type="button" onclick="app.rateFlashcard('hard')"
-                                class="p-4 rounded-2xl bg-rose-50 hover:bg-rose-600 text-rose-700 hover:text-white border border-rose-200 transition-all flex flex-col items-center gap-1 cursor-pointer">
-                                <span class="font-display font-extrabold text-sm sm:text-base flex items-center gap-1.5">
-                                    <span>&lt; Chưa thuộc</span>
-                                </span>
-                                <span class="text-[11px] opacity-80">Ôn lại sau 1 ngày &amp; lặp cuối phiên</span>
+                                class="p-3.5 rounded-2xl bg-rose-50 hover:bg-rose-100 border ${this.fcLastDirectionHint === 'left' ? 'ring-2 ring-rose-500' : 'border-rose-200'} text-rose-800 text-center space-y-1 cursor-pointer">
+                                <div class="font-display font-extrabold text-xs sm:text-sm">&lt; Chưa thuộc</div>
+                                <div class="text-[11px] text-rose-600">Phím &lt; • Ôn lại 1 ngày</div>
+                            </button>
+
+                            <button type="button" onclick="app.rateFlashcard('good')"
+                                class="p-3.5 rounded-2xl bg-amber-50 hover:bg-amber-100 border border-amber-200 text-amber-800 text-center space-y-1 cursor-pointer">
+                                <div class="font-display font-extrabold text-xs sm:text-sm">Nhớ được</div>
+                                <div class="text-[11px] text-amber-600">Mốc ${nextDays} ngày</div>
                             </button>
 
                             <button type="button" onclick="app.rateFlashcard('easy')"
-                                class="p-4 rounded-2xl bg-emerald-50 hover:bg-emerald-600 text-emerald-700 hover:text-white border border-emerald-200 transition-all flex flex-col items-center gap-1 cursor-pointer">
-                                <span class="font-display font-extrabold text-sm sm:text-base flex items-center gap-1.5">
-                                    <span>Thuộc rồi &gt;</span>
-                                </span>
-                                <span class="text-[11px] opacity-80">Giãn lịch ôn sau ${nextDays} ngày</span>
+                                class="p-3.5 rounded-2xl bg-emerald-50 hover:bg-emerald-100 border ${this.fcLastDirectionHint === 'right' ? 'ring-2 ring-emerald-500' : 'border-emerald-200'} text-emerald-800 text-center space-y-1 cursor-pointer">
+                                <div class="font-display font-extrabold text-xs sm:text-sm">Thuộc rồi &gt;</div>
+                                <div class="text-[11px] text-emerald-600">Phím &gt; • Giãn lịch ôn</div>
                             </button>
                         </div>
                     </div>
@@ -1612,18 +1275,17 @@ ${rawLines.map((line, i) => `${i + 1}. ${line}`).join("\n")}`;
             }
 
             // =========================================================================
-            // 4. QUIZ VIEW (MULTIPLE CHOICE + EXAMPLE TRANSITION CARD)
+            // 4. MULTIPLE CHOICE QUIZ VIEW
             // =========================================================================
             initQuiz(onlyDue = false) {
                 const deck = this.getActiveDeck();
                 if (!deck) return;
                 this.quizOnlyDue = onlyDue;
                 const pool = onlyDue ? this.getDueItemsForDeck(deck) : deck.items;
-                this.quizQueue = this.shuffleArray(pool.length > 0 ? pool : deck.items);
+                this.quizQueue = this.shuffleArray(pool);
                 this.quizIndex = 0;
                 this.quizScore = 0;
                 this.quizAnswered = false;
-                this.quizSelectedOptionId = null;
                 this.quizShowPronunciationTip = false;
                 this.buildQuizOptions();
             }
@@ -1633,32 +1295,33 @@ ${rawLines.map((line, i) => `${i + 1}. ${line}`).join("\n")}`;
                 const current = this.quizQueue[this.quizIndex];
                 if (!deck || !current) return;
 
-                const distractors = this.shuffleArray(deck.items.filter(i => i.id !== current.id)).slice(0, 3);
-                const fallbackDistractors = [
-                    { id: "fb-1", collocation: "take into account", meaningVi: "xem xét, cân nhắc kỹ lưỡng" },
-                    { id: "fb-2", collocation: "draw a conclusion", meaningVi: "rút ra kết luận" },
-                    { id: "fb-3", collocation: "bridge the gap", meaningVi: "thu hẹp khoảng cách" }
-                ];
-
-                while (distractors.length < 3) {
-                    distractors.push(fallbackDistractors[distractors.length]);
-                }
-
+                const allItems = deck.items.length >= 4 ? deck.items : [...deck.items, ...this.getDefaultDecks()[0].items];
+                const distractors = this.shuffleArray(allItems.filter(i => i.id !== current.id)).slice(0, 3);
                 this.quizOptions = this.shuffleArray([current, ...distractors]);
+                this.quizSelectedId = null;
+                this.quizAnswered = false;
+                this.quizShowPronunciationTip = false;
+
+                if (this.quizDirection === "en-to-vi") {
+                    setTimeout(() => this.speakEnglish(current.collocation), 200);
+                }
             }
 
-            answerQuiz(optionId) {
+            selectQuizOption(optionId) {
                 if (this.quizAnswered) return;
                 const deck = this.getActiveDeck();
                 const current = this.quizQueue[this.quizIndex];
                 if (!deck || !current) return;
 
+                this.quizSelectedId = optionId;
                 this.quizAnswered = true;
-                this.quizSelectedOptionId = optionId;
                 const isCorrect = optionId === current.id;
-                if (isCorrect) this.quizScore++;
-
-                this.updateItemSrsSchedule(deck.id, current.id, isCorrect);
+                if (isCorrect) {
+                    this.quizScore++;
+                    this.updateItemSrsSchedule(deck.id, current.id, "advance");
+                } else {
+                    this.updateItemSrsSchedule(deck.id, current.id, "reset");
+                }
                 this.speakEnglish(current.collocation);
                 this.render();
             }
@@ -1667,14 +1330,13 @@ ${rawLines.map((line, i) => `${i + 1}. ${line}`).join("\n")}`;
                 const current = this.quizQueue[this.quizIndex];
                 const advance = () => {
                     this.quizIndex++;
-                    this.quizAnswered = false;
-                    this.quizSelectedOptionId = null;
-                    this.quizShowPronunciationTip = false;
-                    this.buildQuizOptions();
+                    if (this.quizIndex < this.quizQueue.length) {
+                        this.buildQuizOptions();
+                    }
                     this.render();
                 };
                 if (current) {
-                    this.speakEnglish(current.collocation, 0.94, advance);
+                    this.speakEnglish(current.collocation, 0.95, advance);
                 } else {
                     advance();
                 }
@@ -1682,26 +1344,21 @@ ${rawLines.map((line, i) => `${i + 1}. ${line}`).join("\n")}`;
 
             renderQuizView() {
                 const deck = this.getActiveDeck();
-                if (!deck || deck.items.length === 0) {
-                    return this.renderEmptyDeckPrompt("Trắc nghiệm");
-                }
-                if (this.quizQueue.length === 0) {
-                    this.initQuiz(false);
-                }
+                if (!deck || deck.items.length === 0) return `<div class="bg-white rounded-3xl p-8 text-center">Bộ từ trống.</div>`;
 
                 if (this.quizIndex >= this.quizQueue.length) {
                     return `
-                        <div class="max-w-xl mx-auto bg-white rounded-3xl border border-pinky-200 p-8 text-center space-y-5 shadow-sm">
-                            <h2 class="font-display font-extrabold text-2xl text-slate-900">Hoàn thành bài Trắc nghiệm!</h2>
-                            <p class="text-base font-bold text-pinky-700">Điểm số của bạn: ${this.quizScore} / ${this.quizQueue.length}</p>
-                            <div class="flex flex-wrap justify-center gap-3">
+                        <div class="max-w-xl mx-auto bg-white rounded-3xl border border-pinky-200 p-8 text-center space-y-4 shadow-sm">
+                            <h2 class="font-display font-extrabold text-2xl text-slate-900">Hoàn thành Trắc nghiệm!</h2>
+                            <p class="text-lg font-extrabold text-pinky-600">Điểm số: ${this.quizScore} / ${this.quizQueue.length}</p>
+                            <div class="flex justify-center gap-3 pt-2">
                                 <button type="button" onclick="app.initQuiz(false); app.render()"
-                                    class="px-5 py-3 rounded-2xl bg-pinky-600 text-white text-xs sm:text-sm font-bold">
-                                    Làm lại trắc nghiệm
+                                    class="px-5 py-3 rounded-2xl bg-pinky-600 text-white text-xs sm:text-sm font-bold cursor-pointer">
+                                    Làm lại
                                 </button>
                                 <button type="button" onclick="app.openDeckHub('${deck.id}')"
-                                    class="px-5 py-3 rounded-2xl bg-pinky-50 text-pinky-700 border border-pinky-200 text-xs sm:text-sm font-bold">
-                                    Về bộ từ
+                                    class="px-5 py-3 rounded-2xl bg-pinky-50 text-pinky-700 text-xs sm:text-sm font-bold cursor-pointer">
+                                    Về trang bộ từ
                                 </button>
                             </div>
                         </div>
@@ -1714,83 +1371,85 @@ ${rawLines.map((line, i) => `${i + 1}. ${line}`).join("\n")}`;
                 return `
                     <div class="max-w-2xl mx-auto space-y-5">
                         <div class="flex flex-wrap items-center justify-between gap-2">
-                            <button type="button" onclick="app.openDeckHub('${deck.id}')" class="text-xs font-bold text-pinky-700 hover:underline flex items-center gap-1">
-                                <i data-lucide="arrow-left" class="w-4 h-4"></i> Bộ: ${this.escapeHtml(deck.title)}
+                            <button type="button" onclick="app.openDeckHub('${deck.id}')" class="text-xs font-bold text-pinky-700 hover:underline flex items-center gap-1 cursor-pointer">
+                                <i data-lucide="arrow-left" class="w-3.5 h-3.5"></i> ${this.escapeHtml(deck.title)}
                             </button>
-                            <div class="flex items-center gap-2">
-                                <button type="button" onclick="app.quizDirection = app.quizDirection === 'en-to-vi' ? 'vi-to-en' : 'en-to-vi'; app.render()"
-                                    class="px-3 py-1 rounded-xl bg-white border border-pinky-200 text-pinky-700 text-xs font-bold">
-                                    Chiều: ${isEnToVi ? "Anh → Việt" : "Việt → Anh"}
+                            <div class="flex items-center gap-1.5 bg-white p-1 rounded-2xl border border-pinky-200">
+                                <button type="button" onclick="app.quizDirection='en-to-vi'; app.buildQuizOptions(); app.render()"
+                                    class="px-3 py-1 rounded-xl text-xs font-bold ${isEnToVi ? 'bg-pinky-600 text-white' : 'text-slate-600'} cursor-pointer">
+                                    Anh → Việt
                                 </button>
-                                <span class="px-3 py-1 rounded-full bg-pinky-100 text-pinky-800 text-xs font-extrabold">
-                                    Câu ${this.quizIndex + 1} / ${this.quizQueue.length}
-                                </span>
+                                <button type="button" onclick="app.quizDirection='vi-to-en'; app.buildQuizOptions(); app.render()"
+                                    class="px-3 py-1 rounded-xl text-xs font-bold ${!isEnToVi ? 'bg-pinky-600 text-white' : 'text-slate-600'} cursor-pointer">
+                                    Việt → Anh
+                                </button>
                             </div>
                         </div>
 
-                        <div class="bg-white rounded-3xl border border-pinky-200 p-6 sm:p-8 shadow-sm space-y-6">
-                            <div class="text-center space-y-2">
-                                <span class="text-xs font-bold text-pinky-500 uppercase">
-                                    ${isEnToVi ? "Chọn nghĩa tiếng Việt đúng của cụm từ:" : "Chọn cụm từ tiếng Anh tương ứng:"}
-                                </span>
-                                <h2 class="font-display font-extrabold text-2xl sm:text-3xl text-slate-900">
+                        <div class="bg-white rounded-3xl border border-pinky-200 p-6 sm:p-8 shadow-sm space-y-5">
+                            <div class="flex items-center justify-between text-xs font-bold text-slate-500">
+                                <span>Câu ${this.quizIndex + 1} / ${this.quizQueue.length}</span>
+                                <span>Đúng: ${this.quizScore}</span>
+                            </div>
+
+                            <div class="text-center space-y-3 py-2">
+                                <h2 class="font-display font-extrabold text-xl sm:text-3xl text-slate-900">
                                     ${this.escapeHtml(isEnToVi ? current.collocation : current.meaningVi)}
                                 </h2>
-                                <div class="flex items-center justify-center gap-2 pt-1">
-                                    ${isEnToVi ? `
+                                ${isEnToVi ? `
+                                    <div class="flex justify-center gap-2">
                                         <button type="button" onclick="app.speakEnglish('${this.escapeJs(current.collocation)}')"
-                                            class="px-3.5 py-1.5 rounded-xl bg-pinky-50 text-pinky-700 text-xs font-bold">
+                                            class="px-3.5 py-1.5 rounded-xl bg-pinky-100 text-pinky-800 text-xs font-bold cursor-pointer">
                                             🔊 Nghe phát âm
                                         </button>
-                                    ` : ""}
-                                    <button type="button" onclick="app.togglePronunciationGuide('quiz')"
-                                        class="px-3.5 py-1.5 rounded-xl bg-white border border-pinky-200 text-pinky-700 text-xs font-bold">
-                                        👂 Cách đọc
-                                    </button>
-                                </div>
+                                        <button type="button" onclick="app.togglePronunciationGuide('quiz')"
+                                            class="px-3.5 py-1.5 rounded-xl bg-amber-100 text-amber-900 text-xs font-bold cursor-pointer">
+                                            🗣️ Cách đọc
+                                        </button>
+                                    </div>
+                                ` : ""}
                             </div>
 
                             ${this.quizShowPronunciationTip ? this.renderPronunciationGuideBox(current) : ""}
 
                             <div class="grid grid-cols-1 gap-2.5">
                                 ${this.quizOptions.map(opt => {
-                                    const label = isEnToVi ? opt.meaningVi : opt.collocation;
-                                    let btnStyle = "bg-pinky-50/60 hover:bg-pinky-100 border-pinky-200 text-slate-800";
+                                    let btnClass = "bg-pinky-50/60 hover:bg-pinky-100 border-pinky-200 text-slate-800";
                                     if (this.quizAnswered) {
                                         if (opt.id === current.id) {
-                                            btnStyle = "bg-emerald-100 border-emerald-500 text-emerald-950 font-extrabold";
-                                        } else if (opt.id === this.quizSelectedOptionId) {
-                                            btnStyle = "bg-rose-100 border-rose-500 text-rose-950";
+                                            btnClass = "bg-emerald-100 border-emerald-500 text-emerald-950 font-extrabold";
+                                        } else if (opt.id === this.quizSelectedId) {
+                                            btnClass = "bg-rose-100 border-rose-500 text-rose-950";
                                         } else {
-                                            btnStyle = "bg-slate-50 border-slate-200 text-slate-400";
+                                            btnClass = "bg-slate-50 border-slate-200 text-slate-400";
                                         }
                                     }
                                     return `
-                                        <button type="button" onclick="app.answerQuiz('${opt.id}')"
-                                            class="w-full p-4 rounded-2xl border text-left text-xs sm:text-sm font-semibold transition-all cursor-pointer ${btnStyle}">
-                                            ${this.escapeHtml(label)}
+                                        <button type="button" onclick="app.selectQuizOption('${opt.id}')"
+                                            class="w-full p-4 rounded-2xl border text-left text-xs sm:text-sm font-semibold transition-all ${btnClass} cursor-pointer">
+                                            ${this.escapeHtml(isEnToVi ? opt.meaningVi : opt.collocation)}
                                         </button>
                                     `;
                                 }).join("")}
                             </div>
 
                             ${this.quizAnswered ? `
-                                <div class="p-4 rounded-2xl bg-pinky-50 border border-pinky-200 space-y-3">
+                                <div class="p-4 rounded-2xl bg-pinky-50 border border-pinky-200 space-y-2">
                                     <div class="flex items-center justify-between">
-                                        <span class="text-xs font-extrabold text-pinky-700">💡 Gợi ý câu ví dụ thực tế:</span>
+                                        <span class="text-xs font-extrabold text-pinky-800">💡 Gợi ý câu ví dụ thực tế:</span>
                                         <button type="button" onclick="app.speakEnglish('${this.escapeJs(current.exampleEn || current.collocation)}')"
-                                            class="px-3 py-1 rounded-xl bg-white border border-pinky-200 text-pinky-700 text-xs font-bold">
-                                            🔊 Nghe câu ví dụ
+                                            class="text-xs font-bold text-pinky-700 underline cursor-pointer">
+                                            🔊 Nghe ví dụ
                                         </button>
                                     </div>
-                                    <p class="text-xs sm:text-sm font-bold text-slate-900">
-                                        "${this.escapeHtml(current.exampleEn || `We should try to use "${current.collocation}" naturally in daily conversation.`)}"
-                                    </p>
+                                    <p class="text-xs sm:text-sm font-semibold text-slate-800">"${this.escapeHtml(current.exampleEn || current.collocation)}"</p>
                                     ${current.exampleVi ? `<p class="text-xs text-slate-600">${this.escapeHtml(current.exampleVi)}</p>` : ""}
-                                    <button type="button" onclick="app.nextQuizQuestion()"
-                                        class="w-full py-3 rounded-2xl bg-pinky-600 hover:bg-pinky-700 text-white text-xs sm:text-sm font-extrabold cursor-pointer">
-                                        Phát âm lại &amp; Sang câu tiếp theo →
-                                    </button>
+                                    <div class="pt-2 flex justify-end">
+                                        <button type="button" onclick="app.nextQuizQuestion()"
+                                            class="px-5 py-2.5 rounded-2xl bg-pinky-600 hover:bg-pinky-700 text-white text-xs font-extrabold cursor-pointer">
+                                            Câu tiếp theo →
+                                        </button>
+                                    </div>
                                 </div>
                             ` : ""}
                         </div>
@@ -1799,18 +1458,19 @@ ${rawLines.map((line, i) => `${i + 1}. ${line}`).join("\n")}`;
             }
 
             // =========================================================================
-            // 5. TWO-WAY WRITING VIEW (VI -> EN & EN -> VI)
+            // 5. TWO-WAY WRITING PRACTICE VIEW (VI -> EN & EN -> VI)
             // =========================================================================
             initWriting(onlyDue = false) {
                 const deck = this.getActiveDeck();
                 if (!deck) return;
                 this.writeOnlyDue = onlyDue;
                 const pool = onlyDue ? this.getDueItemsForDeck(deck) : deck.items;
-                this.writeQueue = this.shuffleArray(pool.length > 0 ? pool : deck.items);
+                this.writeQueue = this.shuffleArray(pool);
                 this.writeIndex = 0;
                 this.writeScore = 0;
                 this.writeAnswered = false;
-                this.writeLastResult = null;
+                this.writeUserAnswer = "";
+                this.writeFeedback = null;
                 this.writeShowPronunciationTip = false;
                 this.setWritingItemDirection();
             }
@@ -1821,52 +1481,55 @@ ${rawLines.map((line, i) => `${i + 1}. ${line}`).join("\n")}`;
                 } else {
                     this.currentItemDirection = this.writeDirection;
                 }
+                const current = this.writeQueue[this.writeIndex];
+                if (current && this.currentItemDirection === "en-to-vi") {
+                    setTimeout(() => this.speakEnglish(current.collocation), 200);
+                }
             }
 
-            async submitWritingAnswer() {
+            async checkWritingAnswer() {
                 if (this.writeAnswered || this.isCheckingWritingAI) return;
                 const deck = this.getActiveDeck();
                 const current = this.writeQueue[this.writeIndex];
-                const inputEl = document.getElementById("writing-answer-input");
-                const userAns = (inputEl ? inputEl.value : "").trim();
-
-                if (!deck || !current) return;
-                if (!userAns) {
-                    this.showToast("Hãy nhập câu trả lời của bạn trước khi kiểm tra nhé!");
+                const input = document.getElementById("writing-answer-input");
+                const ans = (input ? input.value : "").trim();
+                if (!deck || !current || !ans) {
+                    this.showToast("Vui lòng nhập câu trả lời của bạn!");
                     return;
                 }
 
-                const isViToEn = this.currentItemDirection === "vi-to-en";
-                const normalize = (s) => s.toLowerCase().replace(/[.,!?;:"'()]/g, "").replace(/\s+/g, " ").trim();
+                this.writeUserAnswer = ans;
+                const normUser = ans.toLowerCase().replace(/[.,!?]/g, "").trim();
 
-                if (isViToEn) {
-                    const isExact = normalize(userAns) === normalize(current.collocation);
+                if (this.currentItemDirection === "vi-to-en") {
+                    const normTarget = current.collocation.toLowerCase().replace(/[.,!?]/g, "").trim();
+                    const isCorrect = normUser === normTarget;
                     this.writeAnswered = true;
-                    if (isExact) this.writeScore++;
-                    this.writeLastResult = {
-                        isCorrect: isExact,
-                        userAnswer: userAns,
-                        expectedAnswer: current.collocation,
-                        feedbackVi: isExact
+                    if (isCorrect) {
+                        this.writeScore++;
+                        this.updateItemSrsSchedule(deck.id, current.id, "advance");
+                    } else {
+                        this.updateItemSrsSchedule(deck.id, current.id, "reset");
+                    }
+                    this.writeFeedback = {
+                        isCorrect,
+                        explanation: isCorrect
                             ? "Chính xác tuyệt đối! Bạn đã viết đúng cụm Collocation tiếng Anh."
-                            : `Đáp án chuẩn là: "${current.collocation}". Hãy chú ý mạo từ và giới từ đi kèm nhé.`
+                            : `Đáp án chuẩn là: "${current.collocation}".`
                     };
-                    this.updateItemSrsSchedule(deck.id, current.id, isExact);
                     this.speakEnglish(current.collocation);
                     this.render();
                 } else {
-                    // EN -> VI: allow flexible semantic check via Gemini AI
-                    const quickMatch = normalize(userAns) === normalize(current.meaningVi);
-                    if (quickMatch) {
+                    // EN -> VI: Check quickly or use AI semantic check
+                    const normTargetVi = current.meaningVi.toLowerCase();
+                    if (normTargetVi.includes(normUser) && normUser.length >= 3) {
                         this.writeAnswered = true;
                         this.writeScore++;
-                        this.writeLastResult = {
+                        this.updateItemSrsSchedule(deck.id, current.id, "advance");
+                        this.writeFeedback = {
                             isCorrect: true,
-                            userAnswer: userAns,
-                            expectedAnswer: current.meaningVi,
-                            feedbackVi: "Dịch nghĩa tiếng Việt hoàn toàn chính xác!"
+                            explanation: `Chính xác! Nghĩa đầy đủ: "${current.meaningVi}".`
                         };
-                        this.updateItemSrsSchedule(deck.id, current.id, true);
                         this.speakEnglish(current.collocation);
                         this.render();
                         return;
@@ -1875,43 +1538,35 @@ ${rawLines.map((line, i) => `${i + 1}. ${line}`).join("\n")}`;
                     this.isCheckingWritingAI = true;
                     this.render();
                     try {
-                        const prompt = `Cụm từ tiếng Anh: "${current.collocation}" (nghĩa tham khảo: "${current.meaningVi}").
-Người học dịch sang tiếng Việt là: "${userAns}".
-Hãy đánh giá xem bản dịch của người học có đúng ý nghĩa cốt lõi không.`;
-                        const schema = {
-                            type: "OBJECT",
-                            properties: {
-                                isCorrect: { type: "BOOLEAN" },
-                                feedbackVi: { type: "STRING" }
-                            },
-                            required: ["isCorrect", "feedbackVi"]
-                        };
+                        const prompt = `Cụm từ tiếng Anh: "${current.collocation}". Nghĩa chuẩn: "${current.meaningVi}".
+Người học dịch sang tiếng Việt là: "${ans}".
+Hãy đánh giá xem bản dịch của người học có đúng nghĩa không (trả về JSON).`;
                         const raw = await callGeminiAPI({
                             contents: [{ role: "user", parts: [{ text: prompt }] }],
-                            systemInstruction: "Bạn là giáo viên tiếng Anh chấm bài dịch Anh - Việt linh hoạt theo ngữ nghĩa tự nhiên.",
-                            responseSchema: schema
+                            responseSchema: {
+                                type: "OBJECT",
+                                properties: {
+                                    isCorrect: { type: "BOOLEAN" },
+                                    explanation: { type: "STRING" }
+                                },
+                                required: ["isCorrect", "explanation"]
+                            }
                         });
-                        const parsed = JSON.parse(raw);
+                        const res = JSON.parse(raw);
                         this.writeAnswered = true;
-                        if (parsed.isCorrect) this.writeScore++;
-                        this.writeLastResult = {
-                            isCorrect: parsed.isCorrect,
-                            userAnswer: userAns,
-                            expectedAnswer: current.meaningVi,
-                            feedbackVi: parsed.feedbackVi
-                        };
-                        this.updateItemSrsSchedule(deck.id, current.id, parsed.isCorrect);
-                    } catch (e) {
-                        const overlap = normalize(current.meaningVi).split(" ").some(w => w.length > 2 && normalize(userAns).includes(w));
+                        if (res.isCorrect) {
+                            this.writeScore++;
+                            this.updateItemSrsSchedule(deck.id, current.id, "advance");
+                        } else {
+                            this.updateItemSrsSchedule(deck.id, current.id, "reset");
+                        }
+                        this.writeFeedback = res;
+                    } catch (_) {
                         this.writeAnswered = true;
-                        if (overlap) this.writeScore++;
-                        this.writeLastResult = {
-                            isCorrect: overlap,
-                            userAnswer: userAns,
-                            expectedAnswer: current.meaningVi,
-                            feedbackVi: `Nghĩa tham khảo chuẩn: "${current.meaningVi}".`
+                        this.writeFeedback = {
+                            isCorrect: false,
+                            explanation: `Nghĩa tham khảo chuẩn: "${current.meaningVi}".`
                         };
-                        this.updateItemSrsSchedule(deck.id, current.id, overlap);
                     } finally {
                         this.isCheckingWritingAI = false;
                         this.speakEnglish(current.collocation);
@@ -1925,13 +1580,16 @@ Hãy đánh giá xem bản dịch của người học có đúng ý nghĩa cố
                 const advance = () => {
                     this.writeIndex++;
                     this.writeAnswered = false;
-                    this.writeLastResult = null;
+                    this.writeUserAnswer = "";
+                    this.writeFeedback = null;
                     this.writeShowPronunciationTip = false;
-                    this.setWritingItemDirection();
+                    if (this.writeIndex < this.writeQueue.length) {
+                        this.setWritingItemDirection();
+                    }
                     this.render();
                 };
                 if (current) {
-                    this.speakEnglish(current.collocation, 0.94, advance);
+                    this.speakEnglish(current.collocation, 0.95, advance);
                 } else {
                     advance();
                 }
@@ -1939,26 +1597,21 @@ Hãy đánh giá xem bản dịch của người học có đúng ý nghĩa cố
 
             renderWritingView() {
                 const deck = this.getActiveDeck();
-                if (!deck || deck.items.length === 0) {
-                    return this.renderEmptyDeckPrompt("Tập viết 2 chiều");
-                }
-                if (this.writeQueue.length === 0) {
-                    this.initWriting(false);
-                }
+                if (!deck || deck.items.length === 0) return `<div class="bg-white rounded-3xl p-8 text-center">Bộ từ trống.</div>`;
 
                 if (this.writeIndex >= this.writeQueue.length) {
                     return `
-                        <div class="max-w-xl mx-auto bg-white rounded-3xl border border-pinky-200 p-8 text-center space-y-5 shadow-sm">
-                            <h2 class="font-display font-extrabold text-2xl text-slate-900">Hoàn thành bài Tập viết 2 chiều!</h2>
-                            <p class="text-base font-bold text-pinky-700">Kết quả: ${this.writeScore} / ${this.writeQueue.length} câu đạt</p>
-                            <div class="flex flex-wrap justify-center gap-3">
+                        <div class="max-w-xl mx-auto bg-white rounded-3xl border border-pinky-200 p-8 text-center space-y-4 shadow-sm">
+                            <h2 class="font-display font-extrabold text-2xl text-slate-900">Hoàn thành Tập viết 2 chiều!</h2>
+                            <p class="text-lg font-extrabold text-emerald-600">Đúng: ${this.writeScore} / ${this.writeQueue.length}</p>
+                            <div class="flex justify-center gap-3 pt-2">
                                 <button type="button" onclick="app.initWriting(false); app.render()"
-                                    class="px-5 py-3 rounded-2xl bg-pinky-600 text-white text-xs sm:text-sm font-bold">
-                                    Luyện viết lại
+                                    class="px-5 py-3 rounded-2xl bg-pinky-600 text-white text-xs sm:text-sm font-bold cursor-pointer">
+                                    Luyện lại
                                 </button>
                                 <button type="button" onclick="app.openDeckHub('${deck.id}')"
-                                    class="px-5 py-3 rounded-2xl bg-pinky-50 text-pinky-700 border border-pinky-200 text-xs sm:text-sm font-bold">
-                                    Về bộ từ
+                                    class="px-5 py-3 rounded-2xl bg-pinky-50 text-pinky-700 text-xs sm:text-sm font-bold cursor-pointer">
+                                    Về trang bộ từ
                                 </button>
                             </div>
                         </div>
@@ -1971,97 +1624,102 @@ Hãy đánh giá xem bản dịch của người học có đúng ý nghĩa cố
                 return `
                     <div class="max-w-2xl mx-auto space-y-5">
                         <div class="flex flex-wrap items-center justify-between gap-2">
-                            <button type="button" onclick="app.openDeckHub('${deck.id}')" class="text-xs font-bold text-pinky-700 hover:underline flex items-center gap-1">
-                                <i data-lucide="arrow-left" class="w-4 h-4"></i> Bộ: ${this.escapeHtml(deck.title)}
+                            <button type="button" onclick="app.openDeckHub('${deck.id}')" class="text-xs font-bold text-pinky-700 hover:underline flex items-center gap-1 cursor-pointer">
+                                <i data-lucide="arrow-left" class="w-3.5 h-3.5"></i> ${this.escapeHtml(deck.title)}
                             </button>
-                            <div class="flex items-center gap-1.5">
-                                ${["vi-to-en", "en-to-vi", "mixed"].map(dir => `
-                                    <button type="button" onclick="app.writeDirection = '${dir}'; app.setWritingItemDirection(); app.render()"
-                                        class="px-2.5 py-1 rounded-xl text-[11px] font-bold border ${this.writeDirection === dir ? 'bg-pinky-600 text-white border-pinky-600' : 'bg-white text-slate-600 border-pinky-200'}">
-                                        ${dir === "vi-to-en" ? "Việt → Anh" : dir === "en-to-vi" ? "Anh → Việt" : "Trộn 2 chiều"}
-                                    </button>
-                                `).join("")}
+                            <div class="flex items-center gap-1 bg-white p-1 rounded-2xl border border-pinky-200">
+                                <button type="button" onclick="app.writeDirection='vi-to-en'; app.setWritingItemDirection(); app.render()"
+                                    class="px-2.5 py-1 rounded-xl text-xs font-bold ${this.writeDirection === 'vi-to-en' ? 'bg-pinky-600 text-white' : 'text-slate-600'} cursor-pointer">
+                                    Việt → Anh
+                                </button>
+                                <button type="button" onclick="app.writeDirection='en-to-vi'; app.setWritingItemDirection(); app.render()"
+                                    class="px-2.5 py-1 rounded-xl text-xs font-bold ${this.writeDirection === 'en-to-vi' ? 'bg-pinky-600 text-white' : 'text-slate-600'} cursor-pointer">
+                                    Anh → Việt
+                                </button>
+                                <button type="button" onclick="app.writeDirection='mixed'; app.setWritingItemDirection(); app.render()"
+                                    class="px-2.5 py-1 rounded-xl text-xs font-bold ${this.writeDirection === 'mixed' ? 'bg-pinky-600 text-white' : 'text-slate-600'} cursor-pointer">
+                                    Trộn 2 chiều
+                                </button>
                             </div>
                         </div>
 
                         <div class="bg-white rounded-3xl border border-pinky-200 p-6 sm:p-8 shadow-sm space-y-5">
-                            <div class="flex items-center justify-between">
-                                <span class="px-3 py-1 rounded-full bg-pinky-100 text-pinky-800 text-xs font-extrabold">
-                                    Câu ${this.writeIndex + 1} / ${this.writeQueue.length}
-                                </span>
-                                <button type="button" onclick="app.togglePronunciationGuide('write')"
-                                    class="px-3 py-1 rounded-xl bg-pinky-50 text-pinky-700 text-xs font-bold">
-                                    👂 Cách đọc
-                                </button>
+                            <div class="flex items-center justify-between text-xs font-bold text-slate-500">
+                                <span>Câu ${this.writeIndex + 1} / ${this.writeQueue.length} • ${isViToEn ? "Viết sang Tiếng Anh" : "Dịch sang Tiếng Việt"}</span>
+                                <span>Điểm: ${this.writeScore}</span>
                             </div>
 
                             <div class="text-center space-y-2 py-2">
-                                <span class="text-xs font-bold uppercase text-pinky-500">
-                                    ${isViToEn ? "Viết lại cụm Collocation tiếng Anh cho nghĩa sau:" : "Dịch cụm Collocation sau sang tiếng Việt:"}
-                                </span>
-                                <h2 class="font-display font-extrabold text-2xl sm:text-3xl text-slate-900">
+                                <h2 class="font-display font-extrabold text-xl sm:text-3xl text-slate-900">
                                     ${this.escapeHtml(isViToEn ? current.meaningVi : current.collocation)}
                                 </h2>
                                 ${!isViToEn ? `
-                                    <button type="button" onclick="app.speakEnglish('${this.escapeJs(current.collocation)}')"
-                                        class="px-3.5 py-1.5 rounded-xl bg-pinky-50 text-pinky-700 text-xs font-bold">
-                                        🔊 Nghe phát âm
-                                    </button>
+                                    <div class="flex justify-center gap-2 pt-1">
+                                        <button type="button" onclick="app.speakEnglish('${this.escapeJs(current.collocation)}')"
+                                            class="px-3.5 py-1.5 rounded-xl bg-pinky-100 text-pinky-800 text-xs font-bold cursor-pointer">
+                                            🔊 Nghe phát âm
+                                        </button>
+                                        <button type="button" onclick="app.togglePronunciationGuide('write')"
+                                            class="px-3.5 py-1.5 rounded-xl bg-amber-100 text-amber-900 text-xs font-bold cursor-pointer">
+                                            🗣️ Cách đọc
+                                        </button>
+                                    </div>
                                 ` : ""}
                             </div>
 
                             ${this.writeShowPronunciationTip ? this.renderPronunciationGuideBox(current) : ""}
 
-                            ${!this.writeAnswered ? `
-                                <div class="space-y-3">
-                                    <input id="writing-answer-input" type="text"
-                                        onkeydown="if(event.key==='Enter'){ event.preventDefault(); app.submitWritingAnswer(); }"
-                                        placeholder="${isViToEn ? 'Gõ cụm từ tiếng Anh...' : 'Gõ nghĩa tiếng Việt...'}"
-                                        class="w-full px-4 py-3.5 rounded-2xl border-2 border-pinky-200 focus:border-pinky-500 text-sm sm:text-base font-semibold outline-hidden">
-                                    <button type="button" onclick="app.submitWritingAnswer()" ${this.isCheckingWritingAI ? "disabled" : ""}
-                                        class="w-full py-3.5 rounded-2xl bg-pinky-600 hover:bg-pinky-700 disabled:opacity-60 text-white font-display font-extrabold text-sm shadow-sm cursor-pointer">
-                                        ${this.isCheckingWritingAI ? "AI đang kiểm tra nghĩa..." : "Kiểm tra đáp án"}
+                            <div class="space-y-3">
+                                <input id="writing-answer-input" type="text"
+                                    value="${this.escapeHtml(this.writeUserAnswer)}"
+                                    ${this.writeAnswered ? "disabled" : ""}
+                                    onkeydown="if(event.key==='Enter'){ event.preventDefault(); ${this.writeAnswered ? 'app.nextWritingQuestion()' : 'app.checkWritingAnswer()'}; }"
+                                    placeholder="${isViToEn ? 'Nhập cụm Collocation tiếng Anh...' : 'Nhập nghĩa tiếng Việt...'}"
+                                    class="w-full px-4 py-3.5 rounded-2xl border border-pinky-200 focus:border-pinky-500 text-sm sm:text-base font-semibold outline-hidden">
+
+                                ${!this.writeAnswered ? `
+                                    <button type="button" onclick="app.checkWritingAnswer()" ${this.isCheckingWritingAI ? "disabled" : ""}
+                                        class="w-full py-3.5 rounded-2xl bg-pinky-600 hover:bg-pinky-700 text-white text-xs sm:text-sm font-extrabold cursor-pointer">
+                                        ${this.isCheckingWritingAI ? "AI đang chấm nghĩa tiếng Việt..." : "Kiểm tra đáp án"}
                                     </button>
-                                </div>
-                            ` : `
-                                <div class="p-4 rounded-2xl ${this.writeLastResult?.isCorrect ? 'bg-emerald-50 border-emerald-200' : 'bg-rose-50 border-rose-200'} border space-y-3">
-                                    <div class="font-display font-extrabold text-sm ${this.writeLastResult?.isCorrect ? 'text-emerald-800' : 'text-rose-800'}">
-                                        ${this.writeLastResult?.isCorrect ? "✓ Chính xác!" : "✕ Chưa chính xác"}
-                                    </div>
-                                    <p class="text-xs sm:text-sm text-slate-800">${this.escapeHtml(this.writeLastResult?.feedbackVi || "")}</p>
-                                    <div class="p-3 rounded-xl bg-white/90 border border-pinky-100 space-y-1">
-                                        <div class="flex items-center justify-between">
-                                            <span class="text-[11px] font-bold text-pinky-700">Cụm từ &amp; Câu ví dụ gợi ý:</span>
-                                            <button type="button" onclick="app.speakEnglish('${this.escapeJs(current.exampleEn || current.collocation)}')"
-                                                class="text-[11px] font-bold text-pinky-600 underline">🔊 Nghe ví dụ</button>
+                                ` : `
+                                    <div class="p-4 rounded-2xl ${this.writeFeedback?.isCorrect ? 'bg-emerald-50 border border-emerald-200 text-emerald-900' : 'bg-rose-50 border border-rose-200 text-rose-900'} space-y-2">
+                                        <div class="font-extrabold text-sm">
+                                            ${this.writeFeedback?.isCorrect ? "✅ Chính xác!" : "❌ Chưa đúng rồi!"}
                                         </div>
-                                        <p class="text-xs font-extrabold text-slate-900">${this.escapeHtml(current.collocation)} — ${this.escapeHtml(current.meaningVi)}</p>
-                                        ${current.exampleEn ? `<p class="text-xs text-slate-600 italic">"${this.escapeHtml(current.exampleEn)}"</p>` : ""}
+                                        <p class="text-xs sm:text-sm">${this.escapeHtml(this.writeFeedback?.explanation || "")}</p>
+                                        ${current.exampleEn ? `
+                                            <div class="pt-2 border-t border-black/10 text-xs">
+                                                <span class="font-bold">Ví dụ:</span> "${this.escapeHtml(current.exampleEn)}"
+                                            </div>
+                                        ` : ""}
+                                        <div class="pt-2 flex justify-end">
+                                            <button type="button" onclick="app.nextWritingQuestion()"
+                                                class="px-5 py-2.5 rounded-2xl bg-slate-900 text-white text-xs font-extrabold cursor-pointer">
+                                                Tiếp theo →
+                                            </button>
+                                        </div>
                                     </div>
-                                    <button type="button" onclick="app.nextWritingQuestion()"
-                                        class="w-full py-3 rounded-2xl bg-pinky-600 hover:bg-pinky-700 text-white text-xs sm:text-sm font-extrabold cursor-pointer">
-                                        Phát âm lại &amp; Sang từ tiếp theo →
-                                    </button>
-                                </div>
-                            `}
+                                `}
+                            </div>
                         </div>
                     </div>
                 `;
             }
 
             // =========================================================================
-            // 6. AI SPEAKING TUTOR VIEW (CONTINUOUS RECORDING + BAND 6.5 - 7.5+ UPGRADE)
+            // 6. AI SPEAKING TUTOR VIEW (CONTINUOUS MANUAL-STOP MIC + IELTS 6.5-7.5+)
             // =========================================================================
             initSpeechRecognition() {
-                const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
-                if (!SpeechRecognition) return;
+                const SpeechRec = window.SpeechRecognition || window.webkitSpeechRecognition;
+                if (!SpeechRec) return;
 
-                const rec = new SpeechRecognition();
-                rec.lang = "en-US";
-                rec.continuous = true;
-                rec.interimResults = true;
+                this.recognition = new SpeechRec();
+                this.recognition.lang = "en-US";
+                this.recognition.continuous = true;
+                this.recognition.interimResults = true;
 
-                rec.onresult = (event) => {
+                this.recognition.onresult = (event) => {
                     let interim = "";
                     for (let i = event.resultIndex; i < event.results.length; i++) {
                         const transcript = event.results[i][0].transcript;
@@ -2071,39 +1729,25 @@ Hãy đánh giá xem bản dịch của người học có đúng ý nghĩa cố
                             interim += transcript;
                         }
                     }
-                    const inputEl = document.getElementById("speaking-user-input");
-                    if (inputEl) {
-                        inputEl.value = (this.finalTranscriptBuffer + (interim ? " " + interim : "")).trim();
+                    const input = document.getElementById("speaking-user-input");
+                    if (input) {
+                        input.value = (this.finalTranscriptBuffer + (interim ? " " + interim : "")).trim();
                     }
                 };
 
-                rec.onend = () => {
-                    // Automatically restart if user has NOT clicked Stop button yet
+                this.recognition.onend = () => {
+                    // Auto-restart as long as the user has NOT clicked the Stop button
                     if (this.isRecording) {
                         try {
-                            rec.start();
-                        } catch (e) {
-                            // Ignore rapid restart error
-                        }
+                            this.recognition.start();
+                        } catch (_) {}
                     }
                 };
-
-                rec.onerror = (event) => {
-                    if (event.error === "not-allowed") {
-                        this.isRecording = false;
-                        clearInterval(this.recordingTimer);
-                        this.showToast("Trình duyệt chưa được cấp quyền Micro!");
-                        this.render();
-                    }
-                };
-
-                this.recognition = rec;
             }
 
             toggleRecording() {
                 if (this.isRecording) {
                     this.stopRecording();
-                    this.render();
                 } else {
                     this.startRecording();
                 }
@@ -2111,157 +1755,144 @@ Hãy đánh giá xem bản dịch của người học có đúng ý nghĩa cố
 
             startRecording() {
                 if (!this.recognition) {
-                    this.showToast("Trình duyệt này không hỗ trợ nhận diện giọng nói, bạn có thể nhập chữ trực tiếp.");
+                    this.showToast("Trình duyệt này chưa hỗ trợ thu âm giọng nói. Hãy dùng Google Chrome!");
                     return;
                 }
-                const inputEl = document.getElementById("speaking-user-input");
-                this.finalTranscriptBuffer = inputEl ? inputEl.value.trim() : "";
+                const input = document.getElementById("speaking-user-input");
+                this.finalTranscriptBuffer = input ? input.value.trim() : "";
                 this.isRecording = true;
                 this.recordingSeconds = 0;
 
-                clearInterval(this.recordingTimer);
+                try {
+                    this.recognition.start();
+                } catch (_) {}
+
                 this.recordingTimer = setInterval(() => {
                     this.recordingSeconds++;
                     const timerEl = document.getElementById("recording-timer-text");
                     if (timerEl) {
-                        timerEl.textContent = this.formatSeconds(this.recordingSeconds);
+                        const mins = String(Math.floor(this.recordingSeconds / 60)).padStart(2, "0");
+                        const secs = String(this.recordingSeconds % 60).padStart(2, "0");
+                        timerEl.textContent = `${mins}:${secs}`;
                     }
                 }, 1000);
 
-                try {
-                    this.recognition.start();
-                } catch (e) {
-                    // Already started
-                }
                 this.render();
             }
 
             stopRecording() {
+                if (!this.isRecording) return;
                 this.isRecording = false;
-                clearInterval(this.recordingTimer);
+                if (this.recordingTimer) {
+                    clearInterval(this.recordingTimer);
+                    this.recordingTimer = null;
+                }
                 if (this.recognition) {
                     try {
                         this.recognition.stop();
-                    } catch (e) {
-                        // Ignore
-                    }
+                    } catch (_) {}
                 }
+                this.render();
             }
 
-            formatSeconds(sec) {
-                const m = String(Math.floor(sec / 60)).padStart(2, "0");
-                const s = String(sec % 60).padStart(2, "0");
-                return `${m}:${s}`;
-            }
-
-            initSpeakingSession() {
+            async initSpeakingSession() {
                 const deck = this.getActiveDeck();
                 if (!deck || deck.items.length === 0) return;
 
-                const picked = this.shuffleArray(deck.items).slice(0, Math.min(2, deck.items.length));
+                this.stopRecording();
+                const picked = this.shuffleArray(deck.items).slice(0, 2);
                 this.targetSpeakingCollocations = picked.map(i => i.collocation);
+                this.speakingMessages = [];
+                this.isSpeakingLoading = true;
+                this.render();
 
-                const firstTarget = picked[0];
-                const starterQuestion = `Hi! Let's practice speaking together. Can you tell me about a situation in your life or society where people need to "${firstTarget.collocation}"?`;
-                this.speakingMessages = [
-                    {
+                const fallbackQuestion = `Can you tell me about a recent situation where you had to ${this.targetSpeakingCollocations[0]}?`;
+
+                try {
+                    const prompt = `Bạn là giám khảo luyện nói tiếng Anh thân thiện. Hãy đặt 1 câu hỏi giao tiếp hoặc IELTS Speaking Part 1/2 ngắn gọn, tự nhiên bằng tiếng Anh để người học có cơ hội sử dụng 1 hoặc cả 2 cụm từ chỉ định sau:
+- "${this.targetSpeakingCollocations.join('"\n- "')}"
+Chỉ trả về câu hỏi tiếng Anh (1-2 câu).`;
+                    const question = await callGeminiAPI({
+                        contents: [{ role: "user", parts: [{ text: prompt }] }]
+                    });
+                    this.speakingMessages.push({
                         role: "ai",
-                        questionEn: starterQuestion,
-                        questionVi: `Chào bạn! Hãy cùng luyện nói nhé. Bạn có thể kể về một tình huống trong cuộc sống hoặc xã hội mà mọi người cần "${firstTarget.collocation}" (${firstTarget.meaningVi}) không?`,
-                        feedback: null
-                    }
-                ];
+                        questionEn: question.trim()
+                    });
+                    this.speakEnglish(question.trim());
+                } catch (_) {
+                    this.speakingMessages.push({
+                        role: "ai",
+                        questionEn: fallbackQuestion
+                    });
+                    this.speakEnglish(fallbackQuestion);
+                } finally {
+                    this.isSpeakingLoading = false;
+                    this.render();
+                }
             }
 
-            async sendSpeakingResponse() {
-                if (this.isSpeakingLoading) return;
-                this.stopRecording();
-
-                const inputEl = document.getElementById("speaking-user-input");
-                const userText = (inputEl ? inputEl.value : "").trim();
-                if (!userText) {
-                    this.showToast("Vui lòng nói hoặc nhập câu trả lời tiếng Anh của bạn nhé!");
+            async sendSpeakingReply() {
+                if (this.isRecording) this.stopRecording();
+                const input = document.getElementById("speaking-user-input");
+                const userText = (input ? input.value : "").trim();
+                if (!userText || this.isSpeakingLoading) {
+                    this.showToast("Hãy nói hoặc nhập câu trả lời tiếng Anh của bạn!");
                     return;
                 }
 
-                const deck = this.getActiveDeck();
-                if (!deck) return;
+                const lastAiMsg = [...this.speakingMessages].reverse().find(m => m.role === "ai");
+                const questionAsked = lastAiMsg ? lastAiMsg.questionEn : "";
 
                 this.speakingMessages.push({
                     role: "user",
                     text: userText
                 });
-                if (inputEl) inputEl.value = "";
                 this.finalTranscriptBuffer = "";
                 this.isSpeakingLoading = true;
                 this.render();
 
                 try {
-                    const targetsStr = this.targetSpeakingCollocations.join(", ");
-                    const nextPicked = this.shuffleArray(deck.items).slice(0, Math.min(2, deck.items.length));
-                    const nextTargets = nextPicked.map(i => i.collocation);
+                    const prompt = `Câu hỏi AI đã hỏi: "${questionAsked}"
+Các cụm Collocation chỉ định cần luyện: ${this.targetSpeakingCollocations.map(c => `"${c}"`).join(", ")}
+Câu trả lời của học viên: "${userText}"
 
-                    const prompt = `Người học vừa trả lời câu hỏi Speaking tiếng Anh với mục tiêu sử dụng các cụm từ chỉ định: [${targetsStr}].
-Câu trả lời của người học: "${userText}"
-Hãy phân tích câu trả lời này và đặt câu hỏi tiếp theo khuyến khích họ dùng cụm: [${nextTargets.join(", ")}].`;
-
-                    const schema = {
-                        type: "OBJECT",
-                        properties: {
-                            usedTargetWell: { type: "BOOLEAN" },
-                            correctedSentence: { type: "STRING" },
-                            correctionExplanationVi: { type: "STRING" },
-                            bandUpgradeSentence: { type: "STRING" },
-                            bandUpgradeExplanationVi: { type: "STRING" },
-                            nextQuestionEn: { type: "STRING" },
-                            nextQuestionVi: { type: "STRING" }
-                        },
-                        required: [
-                            "usedTargetWell",
-                            "correctedSentence",
-                            "correctionExplanationVi",
-                            "bandUpgradeSentence",
-                            "bandUpgradeExplanationVi",
-                            "nextQuestionEn",
-                            "nextQuestionVi"
-                        ]
-                    };
+Hãy phản hồi bằng JSON gồm:
+1. "usedTargets": mảng các cụm từ chỉ định học viên đã dùng được.
+2. "correctedSentence": sửa lại chính xác lỗi ngữ pháp/từ vựng ngay trên câu của học viên sao cho tự nhiên.
+3. "correctionNoteVi": giải thích ngắn gọn bằng tiếng Việt những chỗ đã sửa.
+4. "upgradedBandSentence": viết lại ý của học viên lên trình độ IELTS Band 6.5 - 7.5+ (tự nhiên, mạch lạc, có dùng khéo léo cụm từ chỉ định).
+5. "upgradeNoteVi": phân tích bằng tiếng Việt các từ vựng/cấu trúc ăn điểm trong câu Band 6.5 - 7.5+.
+6. "nextQuestionEn": đặt 1 câu hỏi tiếp theo bằng tiếng Anh để tiếp tục hội thoại.`;
 
                     const raw = await callGeminiAPI({
                         contents: [{ role: "user", parts: [{ text: prompt }] }],
-                        systemInstruction: "Bạn là giám khảo IELTS Speaking 8.5 tận tâm. Hãy sửa lỗi ngữ pháp tự nhiên cho câu của người học (correctedSentence), nâng cấp ý đó lên chuẩn Band 6.5 - 7.5+ có lồng ghép cụm từ chỉ định (bandUpgradeSentence), giải thích ngắn gọn bằng tiếng Việt và đặt câu hỏi tiếp theo bằng tiếng Anh.",
-                        responseSchema: schema
+                        responseSchema: {
+                            type: "OBJECT",
+                            properties: {
+                                usedTargets: { type: "ARRAY", items: { type: "STRING" } },
+                                correctedSentence: { type: "STRING" },
+                                correctionNoteVi: { type: "STRING" },
+                                upgradedBandSentence: { type: "STRING" },
+                                upgradeNoteVi: { type: "STRING" },
+                                nextQuestionEn: { type: "STRING" }
+                            },
+                            required: ["usedTargets", "correctedSentence", "correctionNoteVi", "upgradedBandSentence", "upgradeNoteVi", "nextQuestionEn"]
+                        }
                     });
 
-                    const parsed = JSON.parse(raw);
-                    this.targetSpeakingCollocations = nextTargets;
+                    const feedback = JSON.parse(raw);
                     this.speakingMessages.push({
                         role: "ai",
-                        questionEn: parsed.nextQuestionEn,
-                        questionVi: parsed.nextQuestionVi,
-                        feedback: {
-                            usedTargetWell: parsed.usedTargetWell,
-                            correctedSentence: parsed.correctedSentence,
-                            correctionExplanationVi: parsed.correctionExplanationVi,
-                            bandUpgradeSentence: parsed.bandUpgradeSentence,
-                            bandUpgradeExplanationVi: parsed.bandUpgradeExplanationVi
-                        }
+                        feedback,
+                        questionEn: feedback.nextQuestionEn
                     });
-                    this.speakEnglish(parsed.nextQuestionEn);
+                    this.speakEnglish(feedback.nextQuestionEn);
                 } catch (err) {
-                    console.error(err);
-                    const fallbackTarget = this.targetSpeakingCollocations[0] || "make a decision";
                     this.speakingMessages.push({
                         role: "ai",
-                        questionEn: `Good effort! Can you give another example using "${fallbackTarget}"?`,
-                        questionVi: `Cố gắng tốt lắm! Bạn có thể cho thêm một ví dụ khác sử dụng cụm "${fallbackTarget}" không?`,
-                        feedback: {
-                            usedTargetWell: userText.toLowerCase().includes(fallbackTarget.toLowerCase()),
-                            correctedSentence: userText,
-                            correctionExplanationVi: "AI tạm thời bận, hãy kiểm tra lại thì của động từ và mạo từ nhé.",
-                            bandUpgradeSentence: `From my perspective, individuals should carefully ${fallbackTarget} in order to achieve long-term success.`,
-                            bandUpgradeExplanationVi: "Sử dụng cụm mở đầu 'From my perspective' và cấu trúc mục đích 'in order to' giúp nâng câu lên Band 6.5 - 7.0."
-                        }
+                        questionEn: `That's interesting! Could you give me another example using "${this.targetSpeakingCollocations[0]}"?`,
+                        errorNote: `Không kết nối được AI để chấm chi tiết (${err.message}). Hãy kiểm tra nút API Key góc trên!`
                     });
                 } finally {
                     this.isSpeakingLoading = false;
@@ -2271,142 +1902,136 @@ Hãy phân tích câu trả lời này và đặt câu hỏi tiếp theo khuyế
 
             renderSpeakingView() {
                 const deck = this.getActiveDeck();
-                if (!deck || deck.items.length === 0) {
-                    return this.renderEmptyDeckPrompt("Luyện nói AI");
-                }
-                if (this.speakingMessages.length === 0) {
-                    this.initSpeakingSession();
-                }
+                if (!deck) return "";
+
+                const mins = String(Math.floor(this.recordingSeconds / 60)).padStart(2, "0");
+                const secs = String(this.recordingSeconds % 60).padStart(2, "0");
 
                 return `
-                    <div class="max-w-3xl mx-auto space-y-5">
+                    <div class="max-w-4xl mx-auto space-y-5">
                         <div class="flex flex-wrap items-center justify-between gap-2">
-                            <button type="button" onclick="app.openDeckHub('${deck.id}')" class="text-xs font-bold text-pinky-700 hover:underline flex items-center gap-1">
-                                <i data-lucide="arrow-left" class="w-4 h-4"></i> Bộ: ${this.escapeHtml(deck.title)}
+                            <button type="button" onclick="app.openDeckHub('${deck.id}')" class="text-xs font-bold text-pinky-700 hover:underline flex items-center gap-1 cursor-pointer">
+                                <i data-lucide="arrow-left" class="w-3.5 h-3.5"></i> ${this.escapeHtml(deck.title)}
                             </button>
-                            <button type="button" onclick="app.initSpeakingSession(); app.render()"
-                                class="px-3.5 py-1.5 rounded-xl bg-white border border-pinky-200 text-pinky-700 hover:bg-pinky-50 text-xs font-bold flex items-center gap-1.5">
-                                <i data-lucide="refresh-cw" class="w-3.5 h-3.5"></i> Đổi câu hỏi &amp; từ chỉ định
+                            <button type="button" onclick="app.initSpeakingSession()"
+                                class="px-3.5 py-2 rounded-2xl bg-pinky-100 hover:bg-pinky-200 text-pinky-800 text-xs font-extrabold cursor-pointer">
+                                🔄 Đổi từ chỉ định &amp; Câu hỏi mới
                             </button>
                         </div>
 
                         <!-- Target Collocations Banner -->
-                        <div class="bg-gradient-to-r from-pinky-500 to-rose-500 rounded-3xl p-5 text-white shadow-sm space-y-2">
-                            <div class="text-xs font-bold uppercase tracking-wider text-pinky-100">🎯 Cụm từ chỉ định cần dùng trong câu trả lời:</div>
-                            <div class="flex flex-wrap items-center gap-2">
-                                ${this.targetSpeakingCollocations.map(col => `
-                                    <button type="button" onclick="app.speakEnglish('${this.escapeJs(col)}')"
-                                        class="px-3.5 py-1.5 rounded-2xl bg-white text-pinky-700 font-display font-extrabold text-xs sm:text-sm shadow-2xs flex items-center gap-1.5">
-                                        <span>${this.escapeHtml(col)}</span>
-                                        <i data-lucide="volume-2" class="w-3.5 h-3.5"></i>
-                                    </button>
-                                `).join("")}
+                        <div class="bg-white rounded-3xl border border-pinky-200 p-5 shadow-2xs flex flex-wrap items-center justify-between gap-3">
+                            <div>
+                                <div class="text-xs font-extrabold text-pinky-700">🎯 Thử thách dùng Collocation chỉ định khi nói:</div>
+                                <div class="flex flex-wrap gap-2 mt-2">
+                                    ${this.targetSpeakingCollocations.map(col => `
+                                        <span class="px-3 py-1.5 rounded-2xl bg-pinky-50 border border-pinky-200 text-xs sm:text-sm font-extrabold text-pinky-900">
+                                            ${this.escapeHtml(col)}
+                                        </span>
+                                    `).join("")}
+                                </div>
                             </div>
                         </div>
 
-                        <!-- Conversation Feed -->
-                        <div class="space-y-4">
+                        <!-- Chat & Feedback Feed -->
+                        <div class="bg-white rounded-3xl border border-pinky-200 p-5 sm:p-6 shadow-sm space-y-4 min-h-[300px]">
                             ${this.speakingMessages.map(msg => {
                                 if (msg.role === "user") {
                                     return `
                                         <div class="flex justify-end">
-                                            <div class="max-w-xl bg-pinky-600 text-white rounded-3xl rounded-tr-md px-5 py-3.5 shadow-xs text-xs sm:text-sm leading-relaxed">
+                                            <div class="max-w-xl p-4 rounded-3xl rounded-br-md bg-pinky-600 text-white text-xs sm:text-sm leading-relaxed">
                                                 ${this.escapeHtml(msg.text)}
                                             </div>
                                         </div>
                                     `;
                                 }
-
                                 return `
                                     <div class="space-y-3">
                                         ${msg.feedback ? `
-                                            <div class="bg-white rounded-3xl border border-pinky-200 p-5 shadow-xs space-y-4">
-                                                <div class="flex items-center justify-between">
-                                                    <span class="px-3 py-1 rounded-full ${msg.feedback.usedTargetWell ? 'bg-emerald-100 text-emerald-800' : 'bg-amber-100 text-amber-800'} text-xs font-extrabold">
-                                                        ${msg.feedback.usedTargetWell ? "✓ Đã dùng đúng cụm từ chỉ định!" : "💡 Gợi ý lồng ghép cụm từ chỉ định"}
-                                                    </span>
-                                                </div>
-
-                                                <!-- Corrected Sentence -->
-                                                <div class="p-3.5 rounded-2xl bg-slate-50 border border-slate-200 space-y-1.5">
+                                            <div class="p-4 sm:p-5 rounded-3xl bg-pinky-50/70 border border-pinky-200 space-y-3">
+                                                <!-- Sentence Correction -->
+                                                <div class="p-3.5 rounded-2xl bg-white border border-pinky-100 space-y-1.5">
                                                     <div class="flex items-center justify-between">
-                                                        <span class="text-xs font-extrabold text-slate-700">1. Chỉnh sửa câu tự nhiên hơn:</span>
+                                                        <span class="text-xs font-extrabold text-slate-800">✍️ Sửa lỗi câu của bạn:</span>
                                                         <button type="button" onclick="app.speakEnglish('${this.escapeJs(msg.feedback.correctedSentence)}')"
-                                                            class="px-2.5 py-1 rounded-xl bg-white border border-slate-200 text-slate-700 text-[11px] font-bold">
-                                                            🔊 Nghe câu sửa
-                                                        </button>
+                                                            class="text-xs font-bold text-pinky-600 cursor-pointer">🔊 Nghe</button>
                                                     </div>
-                                                    <p class="text-xs sm:text-sm font-bold text-slate-900">"${this.escapeHtml(msg.feedback.correctedSentence)}"</p>
-                                                    <p class="text-xs text-slate-600">${this.escapeHtml(msg.feedback.correctionExplanationVi)}</p>
+                                                    <p class="text-xs sm:text-sm font-bold text-slate-900">${this.escapeHtml(msg.feedback.correctedSentence)}</p>
+                                                    <p class="text-xs text-slate-600">${this.escapeHtml(msg.feedback.correctionNoteVi)}</p>
                                                 </div>
 
                                                 <!-- Band 6.5 - 7.5+ Upgrade -->
-                                                <div class="p-4 rounded-2xl bg-gradient-to-br from-pinky-50 to-purple-50 border border-pinky-200 space-y-1.5">
+                                                <div class="p-3.5 rounded-2xl bg-gradient-to-r from-amber-50 to-pinky-50 border border-amber-200 space-y-1.5">
                                                     <div class="flex items-center justify-between">
-                                                        <span class="text-xs font-extrabold text-pinky-700">2. Gợi ý nâng cấp chuẩn IELTS Band 6.5 - 7.5+:</span>
-                                                        <button type="button" onclick="app.speakEnglish('${this.escapeJs(msg.feedback.bandUpgradeSentence)}')"
-                                                            class="px-2.5 py-1 rounded-xl bg-pinky-600 text-white text-[11px] font-bold">
-                                                            🔊 Nghe mẫu Band 7.0+
-                                                        </button>
+                                                        <span class="text-xs font-extrabold text-amber-900">🚀 Gợi ý nâng cấp chuẩn IELTS Band 6.5 – 7.5+:</span>
+                                                        <button type="button" onclick="app.speakEnglish('${this.escapeJs(msg.feedback.upgradedBandSentence)}')"
+                                                            class="px-2.5 py-1 rounded-xl bg-amber-600 text-white text-[11px] font-bold cursor-pointer">🔊 Nghe mẫu Band 7.0+</button>
                                                     </div>
-                                                    <p class="text-xs sm:text-sm font-extrabold text-pinky-950">"${this.escapeHtml(msg.feedback.bandUpgradeSentence)}"</p>
-                                                    <p class="text-xs text-slate-700">${this.escapeHtml(msg.feedback.bandUpgradeExplanationVi)}</p>
+                                                    <p class="text-xs sm:text-sm font-extrabold text-slate-900">${this.escapeHtml(msg.feedback.upgradedBandSentence)}</p>
+                                                    <p class="text-xs text-amber-900">${this.escapeHtml(msg.feedback.upgradeNoteVi)}</p>
                                                 </div>
                                             </div>
                                         ` : ""}
 
-                                        <!-- AI Question Bubble -->
-                                        <div class="bg-white rounded-3xl rounded-tl-md border border-pinky-200 p-5 shadow-xs space-y-2">
-                                            <div class="flex items-center justify-between">
-                                                <span class="text-xs font-extrabold text-pinky-600">🤖 AI Examiner hỏi:</span>
-                                                <button type="button" onclick="app.speakEnglish('${this.escapeJs(msg.questionEn)}')"
-                                                    class="px-2.5 py-1 rounded-xl bg-pinky-50 text-pinky-700 text-xs font-bold">
-                                                    🔊 Nghe câu hỏi
-                                                </button>
+                                        ${msg.errorNote ? `<p class="text-xs text-rose-600 font-semibold">${this.escapeHtml(msg.errorNote)}</p>` : ""}
+
+                                        ${msg.questionEn ? `
+                                            <div class="flex items-start gap-2.5 max-w-2xl">
+                                                <div class="w-8 h-8 rounded-2xl bg-pinky-100 text-pinky-700 flex items-center justify-center shrink-0 mt-1">
+                                                    <i data-lucide="bot" class="w-4 h-4"></i>
+                                                </div>
+                                                <div class="p-4 rounded-3xl rounded-tl-md bg-slate-100 text-slate-900 text-xs sm:text-sm space-y-2">
+                                                    <p class="font-semibold">${this.escapeHtml(msg.questionEn)}</p>
+                                                    <button type="button" onclick="app.speakEnglish('${this.escapeJs(msg.questionEn)}')"
+                                                        class="text-xs font-bold text-pinky-700 hover:underline cursor-pointer">
+                                                        🔊 Nghe lại câu hỏi
+                                                    </button>
+                                                </div>
                                             </div>
-                                            <p class="font-display font-bold text-sm sm:text-base text-slate-900">${this.escapeHtml(msg.questionEn)}</p>
-                                            ${msg.questionVi ? `<p class="text-xs text-slate-500">${this.escapeHtml(msg.questionVi)}</p>` : ""}
-                                        </div>
+                                        ` : ""}
                                     </div>
                                 `;
                             }).join("")}
+
+                            ${this.isSpeakingLoading ? `
+                                <div class="text-xs font-bold text-pinky-600 animate-pulse">
+                                    ⏳ AI đang phân tích câu nói &amp; gợi ý nâng cấp Band 6.5 - 7.5+...
+                                </div>
+                            ` : ""}
                         </div>
 
-                        <!-- Continuous Manual-Stop Recording & Text Input Box -->
-                        <div class="bg-white rounded-3xl border border-pinky-200 p-4 sm:p-5 shadow-sm space-y-3">
+                        <!-- Continuous Manual-Stop Voice Recorder & Text Box -->
+                        <div class="bg-white rounded-3xl border border-pinky-200 p-5 shadow-sm space-y-3">
                             ${this.isRecording ? `
-                                <div class="flex items-center justify-between px-4 py-2.5 rounded-2xl bg-rose-50 border border-rose-200">
+                                <div class="p-3.5 rounded-2xl bg-rose-50 border border-rose-200 flex items-center justify-between gap-3">
                                     <div class="flex items-center gap-3">
-                                        <span class="relative flex h-3 w-3">
-                                            <span class="animate-ping absolute inline-flex h-full w-full rounded-full bg-rose-400 opacity-75"></span>
-                                            <span class="relative inline-flex rounded-full h-3 w-3 bg-rose-600"></span>
+                                        <span class="w-3 h-3 rounded-full bg-rose-600 animate-ping"></span>
+                                        <span class="text-xs sm:text-sm font-extrabold text-rose-800">
+                                            Đang ghi âm liên tục... (<span id="recording-timer-text">${mins}:${secs}</span>) — Chỉ dừng khi bạn ấn nút Dừng!
                                         </span>
-                                        <span class="text-xs font-extrabold text-rose-700">Đang ghi âm liên tục (Chỉ dừng khi bạn bấm Dừng)</span>
-                                        <div class="flex items-end gap-0.5 h-5">
-                                            <span class="wave-bar w-1 bg-rose-500 rounded-full" style="animation-delay:0s"></span>
-                                            <span class="wave-bar w-1 bg-rose-500 rounded-full" style="animation-delay:0.2s"></span>
-                                            <span class="wave-bar w-1 bg-rose-500 rounded-full" style="animation-delay:0.4s"></span>
-                                        </div>
                                     </div>
-                                    <span id="recording-timer-text" class="font-mono text-xs font-extrabold text-rose-700">${this.formatSeconds(this.recordingSeconds)}</span>
+                                    <button type="button" onclick="app.stopRecording()"
+                                        class="px-4 py-2 rounded-xl bg-rose-600 hover:bg-rose-700 text-white text-xs font-extrabold cursor-pointer">
+                                        ⏹ Dừng ghi âm
+                                    </button>
                                 </div>
                             ` : ""}
 
                             <textarea id="speaking-user-input" rows="3"
-                                placeholder="Bấm nút Bắt đầu nói (hoặc gõ trực tiếp câu trả lời tiếng Anh của bạn tại đây)..."
+                                placeholder="Bấm nút Bắt đầu nói (Micro) để ghi âm dài không giới hạn thời gian, hoặc gõ câu trả lời của bạn tại đây..."
                                 class="w-full p-3.5 rounded-2xl border border-pinky-200 focus:border-pinky-500 text-xs sm:text-sm outline-hidden"></textarea>
 
                             <div class="flex flex-wrap items-center justify-between gap-2">
                                 <button type="button" onclick="app.toggleRecording()"
-                                    class="px-5 py-3 rounded-2xl ${this.isRecording ? 'bg-rose-600 hover:bg-rose-700 text-white mic-pulse' : 'bg-pinky-100 hover:bg-pinky-200 text-pinky-800'} font-bold text-xs sm:text-sm flex items-center gap-2 transition-all cursor-pointer">
+                                    class="px-4 py-3 rounded-2xl ${this.isRecording ? 'bg-rose-600 text-white mic-pulse' : 'bg-pinky-100 hover:bg-pinky-200 text-pinky-900'} text-xs sm:text-sm font-extrabold flex items-center gap-2 cursor-pointer">
                                     <i data-lucide="${this.isRecording ? 'square' : 'mic'}" class="w-4 h-4"></i>
-                                    ${this.isRecording ? "Dừng ghi âm" : "Bắt đầu nói (Ghi âm dài)"}
+                                    <span>${this.isRecording ? "Dừng ghi âm" : "🎙️ Bắt đầu nói (Ấn dừng mới tắt)"}</span>
                                 </button>
 
-                                <button type="button" onclick="app.sendSpeakingResponse()" ${this.isSpeakingLoading ? "disabled" : ""}
-                                    class="px-6 py-3 rounded-2xl bg-pinky-600 hover:bg-pinky-700 disabled:opacity-60 text-white font-bold text-xs sm:text-sm shadow-sm flex items-center gap-2 cursor-pointer">
+                                <button type="button" onclick="app.sendSpeakingReply()" ${this.isSpeakingLoading ? "disabled" : ""}
+                                    class="px-5 py-3 rounded-2xl bg-pinky-600 hover:bg-pinky-700 disabled:opacity-60 text-white text-xs sm:text-sm font-extrabold flex items-center gap-2 cursor-pointer">
+                                    <span>Gửi &amp; Nâng Band 6.5 - 7.5+</span>
                                     <i data-lucide="send" class="w-4 h-4"></i>
-                                    ${this.isSpeakingLoading ? "AI đang chấm & gợi ý Band 7.0+..." : "Gửi câu trả lời"}
                                 </button>
                             </div>
                         </div>
@@ -2415,19 +2040,93 @@ Hãy phân tích câu trả lời này và đặt câu hỏi tiếp theo khuyế
             }
 
             // =========================================================================
-            // UTILITIES & MAIN RENDER LOOP
+            // MASTER RENDER & UTILITIES
             // =========================================================================
-            renderEmptyDeckPrompt(featureName) {
-                return `
-                    <div class="max-w-lg mx-auto bg-white rounded-3xl border border-pinky-200 p-8 text-center space-y-4">
-                        <h3 class="font-display font-extrabold text-xl text-slate-900">Chưa có bộ từ vựng để mở ${featureName}</h3>
-                        <p class="text-xs sm:text-sm text-slate-500">Hãy quay lại Trang chủ để tạo một bộ file từ vựng mới nhé!</p>
-                        <button type="button" onclick="app.switchTab('creator')"
-                            class="px-5 py-2.5 rounded-2xl bg-pinky-600 text-white font-bold text-sm">
-                            Tạo file từ mới ngay
-                        </button>
-                    </div>
-                `;
+            renderNavigation() {
+                const navEl = document.getElementById("nav-tabs");
+                const selectEl = document.getElementById("active-deck-select");
+                const totalDue = this.getTotalDueAcrossAllDecks();
+
+                if (selectEl) {
+                    selectEl.innerHTML = (this.state.decks || []).map(d => `
+                        <option value="${d.id}" ${d.id === this.state.activeDeckId ? "selected" : ""}>
+                            ${this.escapeHtml(d.title)} (${d.items.length})
+                        </option>
+                    `).join("");
+                }
+
+                if (navEl) {
+                    const tabs = [
+                        { id: "home", label: "🏠 Trang chủ" },
+                        { id: "creator", label: "✨ Tạo bộ từ & File" },
+                        { id: "srs", label: `🔔 Lịch ôn (1-2-5-10d)${totalDue > 0 ? ` (${totalDue})` : ""}` },
+                        { id: "flashcards", label: "🗂️ Flashcards" },
+                        { id: "quiz", label: "📝 Trắc nghiệm" },
+                        { id: "writing", label: "✍️ Tập viết 2 chiều" },
+                        { id: "speaking", label: "🎙️ Luyện nói AI" }
+                    ];
+
+                    navEl.innerHTML = tabs.map(t => {
+                        const active = this.currentTab === t.id || (t.id === "home" && this.currentTab === "deck-hub");
+                        return `
+                            <button type="button" onclick="app.switchTab('${t.id}')"
+                                class="px-3.5 py-2 rounded-2xl text-xs font-extrabold transition-all cursor-pointer ${active ? 'bg-pinky-600 text-white shadow-2xs' : 'text-slate-600 hover:bg-pinky-50 hover:text-pinky-700'}">
+                                ${t.label}
+                            </button>
+                        `;
+                    }).join("");
+                }
+            }
+
+            render() {
+                this.renderNavigation();
+                const mainEl = document.getElementById("app-main");
+                if (!mainEl) return;
+
+                switch (this.currentTab) {
+                    case "creator":
+                        mainEl.innerHTML = this.renderCreatorView();
+                        break;
+                    case "srs":
+                        mainEl.innerHTML = this.renderSrsScheduleView();
+                        break;
+                    case "flashcards":
+                        mainEl.innerHTML = this.renderFlashcardsView();
+                        break;
+                    case "quiz":
+                        mainEl.innerHTML = this.renderQuizView();
+                        break;
+                    case "writing":
+                        mainEl.innerHTML = this.renderWritingView();
+                        break;
+                    case "speaking":
+                        mainEl.innerHTML = this.renderSpeakingView();
+                        break;
+                    case "deck-hub":
+                        mainEl.innerHTML = this.renderDeckHubView();
+                        break;
+                    case "home":
+                    default:
+                        mainEl.innerHTML = this.renderHomeView();
+                        break;
+                }
+
+                if (window.lucide) {
+                    lucide.createIcons();
+                }
+            }
+
+            showToast(message) {
+                const container = document.getElementById("toast-container");
+                if (!container) return;
+                const toast = document.createElement("div");
+                toast.className = "bg-slate-900/95 text-white text-xs sm:text-sm font-medium px-4 py-3 rounded-2xl shadow-lg border border-pinky-400/30 transition-opacity duration-300";
+                toast.textContent = message;
+                container.appendChild(toast);
+                setTimeout(() => {
+                    toast.classList.add("opacity-0");
+                    setTimeout(() => toast.remove(), 300);
+                }, 3200);
             }
 
             shuffleArray(arr) {
@@ -2440,7 +2139,7 @@ Hãy phân tích câu trả lời này và đặt câu hỏi tiếp theo khuyế
             }
 
             escapeHtml(str) {
-                return String(str || "")
+                return String(str ?? "")
                     .replace(/&/g, "&amp;")
                     .replace(/</g, "&lt;")
                     .replace(/>/g, "&gt;")
@@ -2449,100 +2148,16 @@ Hãy phân tích câu trả lời này và đặt câu hỏi tiếp theo khuyế
             }
 
             escapeJs(str) {
-                return String(str || "")
+                return String(str ?? "")
                     .replace(/\\/g, "\\\\")
                     .replace(/'/g, "\\'")
                     .replace(/\n/g, " ");
             }
-
-            showToast(message) {
-                const container = document.getElementById("toast-container");
-                if (!container) return;
-                const toast = document.createElement("div");
-                toast.className = "bg-slate-900/95 text-white text-xs font-semibold px-4 py-3 rounded-2xl shadow-lg border border-pinky-400/30 transition-opacity duration-300";
-                toast.textContent = message;
-                container.appendChild(toast);
-                setTimeout(() => {
-                    toast.style.opacity = "0";
-                    setTimeout(() => toast.remove(), 300);
-                }, 3200);
-            }
-
-            render() {
-                // 1. Update Top Deck Selector
-                const deckSelect = document.getElementById("active-deck-select");
-                if (deckSelect) {
-                    if (this.state.decks.length === 0) {
-                        deckSelect.innerHTML = `<option value="">Chưa có file từ</option>`;
-                    } else {
-                        deckSelect.innerHTML = this.state.decks.map(d =>
-                            `<option value="${d.id}" ${d.id === this.state.activeDeckId ? "selected" : ""}>${this.escapeHtml(d.title)} (${d.items.length})</option>`
-                        ).join("");
-                    }
-                }
-
-                // 2. Render Navigation Pills
-                const navTabs = document.getElementById("nav-tabs");
-                const totalDueAll = this.getTotalDueAcrossAllDecks();
-                if (navTabs) {
-                    const tabs = [
-                        { id: "home", label: "Trang chủ", icon: "home" },
-                        { id: "creator", label: "1. Tạo từ & File", icon: "plus-circle" },
-                        { id: "srs", label: `2. Lịch ôn (1-2-5-10d)${totalDueAll > 0 ? ` (${totalDueAll})` : ""}`, icon: "calendar-clock" },
-                        { id: "flashcards", label: "3. Flashcards", icon: "layers" },
-                        { id: "quiz", label: "4. Trắc nghiệm", icon: "check-circle-2" },
-                        { id: "writing", label: "5. Tập viết", icon: "pen-tool" },
-                        { id: "speaking", label: "6. Luyện nói AI", icon: "mic" }
-                    ];
-
-                    navTabs.innerHTML = tabs.map(t => {
-                        const isActive = this.currentTab === t.id || (t.id === "home" && this.currentTab === "deck-hub");
-                        return `
-                            <button type="button" onclick="app.switchTab('${t.id}')"
-                                class="px-3.5 py-2 rounded-2xl text-xs font-bold flex items-center gap-1.5 transition-all cursor-pointer ${
-                                    isActive
-                                        ? "bg-pinky-600 text-white shadow-xs"
-                                        : "text-slate-600 hover:bg-pinky-50 hover:text-pinky-700"
-                                }">
-                                <i data-lucide="${t.icon}" class="w-3.5 h-3.5"></i>
-                                <span>${t.label}</span>
-                            </button>
-                        `;
-                    }).join("");
-                }
-
-                // 3. Render Active View
-                const mainEl = document.getElementById("app-main");
-                if (mainEl) {
-                    if (this.currentTab === "home") {
-                        mainEl.innerHTML = this.renderHomeView();
-                    } else if (this.currentTab === "deck-hub") {
-                        mainEl.innerHTML = this.renderDeckHubView();
-                    } else if (this.currentTab === "creator") {
-                        mainEl.innerHTML = this.renderCreatorView();
-                    } else if (this.currentTab === "srs") {
-                        mainEl.innerHTML = this.renderSrsScheduleView();
-                    } else if (this.currentTab === "flashcards") {
-                        mainEl.innerHTML = this.renderFlashcardsView();
-                    } else if (this.currentTab === "quiz") {
-                        mainEl.innerHTML = this.renderQuizView();
-                    } else if (this.currentTab === "writing") {
-                        mainEl.innerHTML = this.renderWritingView();
-                    } else if (this.currentTab === "speaking") {
-                        mainEl.innerHTML = this.renderSpeakingView();
-                    }
-                }
-
-                if (window.lucide) {
-                    lucide.createIcons();
-                }
-            }
         }
 
-        // Initialize application when DOM is ready
-        window.addEventListener("DOMContentLoaded", () => {
-            window.app = new TlingEnglishApp();
-        });
+        // Boot Application
+        const app = new TlingEnglishApp();
+        window.app = app;
     </script>
 </body>
 </html>
